@@ -8,6 +8,24 @@ import { hashString, seededRandom } from "../domain/random";
 export const CHUNK_LENGTH_M = 250;
 export const ROAD_HALF_WIDTH_M = 3.2;
 export const CHUNK_SEGMENTS = 32;
+export const ROUTE_CONTROL_LENGTH_M = 100;
+
+export function cityIntersectionsForChunk(chunkIndex: number): number[] {
+  if (chunkIndex < 0) return [];
+  const start = chunkIndex * CHUNK_LENGTH_M;
+  const end = start + CHUNK_LENGTH_M;
+  const firstIndex = Math.ceil(
+    (start - ROUTE_CONTROL_LENGTH_M / 2) / ROUTE_CONTROL_LENGTH_M,
+  );
+  const intersections: number[] = [];
+  for (let index = firstIndex; ; index += 1) {
+    const distance =
+      ROUTE_CONTROL_LENGTH_M / 2 + index * ROUTE_CONTROL_LENGTH_M;
+    if (distance >= end) break;
+    if (distance >= start) intersections.push(distance);
+  }
+  return intersections;
+}
 
 export type RegionWeights = {
   meadow: number;
@@ -154,40 +172,42 @@ export class WorldGenerator {
 
   sample(distanceM: number): RoadSample {
     const clampedDistance = Math.max(0, distanceM);
-    const index = Math.floor(clampedDistance / CHUNK_LENGTH_M);
-    const local = (clampedDistance - index * CHUNK_LENGTH_M) / CHUNK_LENGTH_M;
+    const index = Math.floor(clampedDistance / ROUTE_CONTROL_LENGTH_M);
+    const local =
+      (clampedDistance - index * ROUTE_CONTROL_LENGTH_M) /
+      ROUTE_CONTROL_LENGTH_M;
     const start = this.boundary(index);
     const end = this.boundary(index + 1);
     const x = hermite(
       start.x,
       end.x,
-      start.xSlope * CHUNK_LENGTH_M,
-      end.xSlope * CHUNK_LENGTH_M,
+      start.xSlope * ROUTE_CONTROL_LENGTH_M,
+      end.xSlope * ROUTE_CONTROL_LENGTH_M,
       local,
     );
     const elevationM = hermite(
       start.elevation,
       end.elevation,
-      start.ySlope * CHUNK_LENGTH_M,
-      end.ySlope * CHUNK_LENGTH_M,
+      start.ySlope * ROUTE_CONTROL_LENGTH_M,
+      end.ySlope * ROUTE_CONTROL_LENGTH_M,
       local,
     );
     const xDerivative =
       hermiteDerivative(
         start.x,
         end.x,
-        start.xSlope * CHUNK_LENGTH_M,
-        end.xSlope * CHUNK_LENGTH_M,
+        start.xSlope * ROUTE_CONTROL_LENGTH_M,
+        end.xSlope * ROUTE_CONTROL_LENGTH_M,
         local,
-      ) / CHUNK_LENGTH_M;
+      ) / ROUTE_CONTROL_LENGTH_M;
     const yDerivative =
       hermiteDerivative(
         start.elevation,
         end.elevation,
-        start.ySlope * CHUNK_LENGTH_M,
-        end.ySlope * CHUNK_LENGTH_M,
+        start.ySlope * ROUTE_CONTROL_LENGTH_M,
+        end.ySlope * ROUTE_CONTROL_LENGTH_M,
         local,
-      ) / CHUNK_LENGTH_M;
+      ) / ROUTE_CONTROL_LENGTH_M;
     return {
       distanceM: clampedDistance,
       x,
@@ -210,10 +230,11 @@ export class WorldGenerator {
         previous.elevation,
       );
       const x =
-        previous.x + ((previous.xSlope + slope.xSlope) / 2) * CHUNK_LENGTH_M;
+        previous.x +
+        ((previous.xSlope + slope.xSlope) / 2) * ROUTE_CONTROL_LENGTH_M;
       const elevation =
         previous.elevation +
-        ((previous.ySlope + slope.ySlope) / 2) * CHUNK_LENGTH_M;
+        ((previous.ySlope + slope.ySlope) / 2) * ROUTE_CONTROL_LENGTH_M;
       this.boundaries.set(cursor, { ...slope, x, elevation });
     }
     return this.boundaries.get(index)!;
@@ -233,10 +254,10 @@ export class WorldGenerator {
           ? 0.55
           : 0.78;
     const grade = this.gradeNoise(index * 0.26, 7.3) * cap * profileBias;
-    const bend =
-      this.bendNoise(index * 0.18, 4.1) *
-      0.13 *
-      (this.settings.landscape === "city" ? 0.55 : 1);
+    const bendSignal =
+      this.bendNoise(index * 0.34, 4.1) * 0.72 +
+      Math.sin(index * 0.61 + (this.seedHash % 997) * 0.013) * 0.28;
+    const bend = bendSignal * (this.settings.landscape === "city" ? 0.18 : 0.2);
     return { x, elevation, xSlope: bend, ySlope: grade };
   }
 

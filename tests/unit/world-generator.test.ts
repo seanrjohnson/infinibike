@@ -2,11 +2,18 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_ENVIRONMENT } from "../../src/domain/environment";
 import {
   CHUNK_LENGTH_M,
+  cityIntersectionsForChunk,
   WorldGenerator,
   dominantRegion,
 } from "../../src/world/world-generator";
 
 describe("WorldGenerator", () => {
+  it("places city intersections at regular route-control transitions", () => {
+    expect(cityIntersectionsForChunk(0)).toEqual([50, 150]);
+    expect(cityIntersectionsForChunk(1)).toEqual([250, 350, 450]);
+    expect(cityIntersectionsForChunk(-1)).toEqual([]);
+  });
+
   it("repeats the same world for the same seed", () => {
     const first = new WorldGenerator({
       ...DEFAULT_ENVIRONMENT,
@@ -35,6 +42,29 @@ describe("WorldGenerator", () => {
     expect(first.samples.at(-1)).toEqual(second.samples[0]);
     expect(first.endDistanceM).toBe(second.startDistanceM);
   });
+
+  it.each(["countryside", "city"] as const)(
+    "generates visible, smooth turns in the %s landscape",
+    (landscape) => {
+      const generator = new WorldGenerator({
+        ...DEFAULT_ENVIRONMENT,
+        seed: "turning-road",
+        landscape,
+      });
+      const samples = Array.from({ length: 401 }, (_, index) =>
+        generator.sample(index * 25),
+      );
+      const headings = samples.map((sample) => sample.heading);
+      expect(Math.max(...headings) - Math.min(...headings)).toBeGreaterThan(
+        landscape === "city" ? 0.08 : 0.12,
+      );
+      for (let index = 1; index < samples.length; index += 1) {
+        expect(
+          Math.abs(samples[index]!.heading - samples[index - 1]!.heading),
+        ).toBeLessThan(0.08);
+      }
+    },
+  );
 
   it.each([
     ["gentle", 4],

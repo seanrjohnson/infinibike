@@ -9,6 +9,7 @@ import type { RideSnapshot } from "../domain/ride-model";
 import {
   CHUNK_LENGTH_M,
   ROAD_HALF_WIDTH_M,
+  cityIntersectionsForChunk,
   WorldGenerator,
   type RoadSample,
   type WorldChunkDescriptor,
@@ -735,6 +736,7 @@ export class WorldScene {
           ? 1.28
           : 1;
     const segmentCount = detail === "near" ? 20 : 10;
+    const crossingDistances = cityIntersectionsForChunk(chunk.index);
     const sidewalkMaterial = new THREE.MeshLambertMaterial({ color: 0x9ca29d });
     const sidewalks = new THREE.InstancedMesh(
       new THREE.BoxGeometry(3.6, 0.18, CHUNK_LENGTH_M / segmentCount + 0.35),
@@ -745,6 +747,9 @@ export class WorldScene {
       const distance =
         chunk.startDistanceM + ((index + 0.5) / segmentCount) * CHUNK_LENGTH_M;
       const road = this.generator.sample(distance);
+      const crossesIntersection = crossingDistances.some(
+        (crossingDistance) => Math.abs(distance - crossingDistance) < 5.5,
+      );
       rotation.setFromEuler(
         euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
       );
@@ -757,7 +762,9 @@ export class WorldScene {
             -distance + Math.sin(road.heading) * offset,
           ),
           rotation,
-          new THREE.Vector3(1, 1, 1),
+          crossesIntersection
+            ? new THREE.Vector3(1, 0.01, 0.01)
+            : new THREE.Vector3(1, 1, 1),
         );
         sidewalks.setMatrixAt(index * 2 + sideIndex, matrix);
       }
@@ -766,45 +773,127 @@ export class WorldScene {
     sidewalks.instanceMatrix.needsUpdate = true;
     group.add(sidewalks);
 
-    const crossingDistance = chunk.startDistanceM + CHUNK_LENGTH_M * 0.5;
-    const crossingRoad = this.generator.sample(crossingDistance);
-    rotation.setFromEuler(
-      euler.set(
-        Math.atan(crossingRoad.gradePercent / 100),
-        -crossingRoad.heading,
-        0,
-      ),
-    );
-    const crossStreet = new THREE.Mesh(
+    const crossStreets = new THREE.InstancedMesh(
       new THREE.BoxGeometry(64, 0.08, 8.5),
       new THREE.MeshStandardMaterial({ color: 0x4b504e, roughness: 0.95 }),
+      crossingDistances.length,
     );
-    crossStreet.position.set(
-      crossingRoad.x,
-      crossingRoad.elevationM - 0.01,
-      -crossingDistance,
-    );
-    crossStreet.quaternion.copy(rotation);
     const crosswalk = new THREE.InstancedMesh(
       new THREE.BoxGeometry(4.9, 0.035, 0.42),
       new THREE.MeshBasicMaterial({ color: 0xe7e5da }),
-      12,
+      crossingDistances.length * 12,
     );
-    for (let index = 0; index < 12; index += 1) {
-      const distance = crossingDistance - 3.1 + index * 0.56;
-      const road = this.generator.sample(distance);
+    const signalPoleCount = crossingDistances.length * 4;
+    const signalPoles = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.07, 0.09, 3.4, 6),
+      new THREE.MeshLambertMaterial({ color: 0x303839 }),
+      signalPoleCount,
+    );
+    const signalHeads = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.34, 0.82, 0.34),
+      new THREE.MeshLambertMaterial({ color: 0x232929 }),
+      signalPoleCount,
+    );
+    const signalLights = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(0.1, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xe5a43b }),
+      signalPoleCount,
+    );
+    crossingDistances.forEach((crossingDistance, crossingIndex) => {
+      const crossingRoad = this.generator.sample(crossingDistance);
       rotation.setFromEuler(
-        euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
+        euler.set(
+          Math.atan(crossingRoad.gradePercent / 100),
+          -crossingRoad.heading,
+          0,
+        ),
       );
       matrix.compose(
-        new THREE.Vector3(road.x, road.elevationM + 0.105, -distance),
+        new THREE.Vector3(
+          crossingRoad.x,
+          crossingRoad.elevationM - 0.01,
+          -crossingDistance,
+        ),
         rotation,
         new THREE.Vector3(1, 1, 1),
       );
-      crosswalk.setMatrixAt(index, matrix);
-    }
+      crossStreets.setMatrixAt(crossingIndex, matrix);
+
+      for (let index = 0; index < 12; index += 1) {
+        const approach = index < 6 ? -1 : 1;
+        const stripe = index % 6;
+        const distance = crossingDistance + approach * (4.65 + stripe * 0.48);
+        const road = this.generator.sample(distance);
+        rotation.setFromEuler(
+          euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
+        );
+        matrix.compose(
+          new THREE.Vector3(road.x, road.elevationM + 0.105, -distance),
+          rotation,
+          new THREE.Vector3(1, 1, 1),
+        );
+        crosswalk.setMatrixAt(crossingIndex * 12 + index, matrix);
+      }
+
+      const across = new THREE.Vector3(
+        Math.cos(crossingRoad.heading),
+        0,
+        Math.sin(crossingRoad.heading),
+      );
+      const forward = new THREE.Vector3(
+        Math.sin(crossingRoad.heading),
+        0,
+        -Math.cos(crossingRoad.heading),
+      );
+      const center = new THREE.Vector3(
+        crossingRoad.x,
+        crossingRoad.elevationM,
+        -crossingDistance,
+      );
+      let cornerIndex = 0;
+      for (const side of [-1, 1]) {
+        for (const approach of [-1, 1]) {
+          const instanceIndex = crossingIndex * 4 + cornerIndex;
+          const base = center
+            .clone()
+            .addScaledVector(across, side * 7.2)
+            .addScaledVector(forward, approach * 5.6);
+          matrix.compose(
+            base.clone().setY(base.y + 1.7),
+            rotation.identity(),
+            new THREE.Vector3(1, 1, 1),
+          );
+          signalPoles.setMatrixAt(instanceIndex, matrix);
+          rotation.setFromEuler(
+            euler.set(
+              0,
+              -crossingRoad.heading + (approach > 0 ? 0 : Math.PI),
+              0,
+            ),
+          );
+          const headPosition = base.clone().setY(base.y + 3.55);
+          matrix.compose(headPosition, rotation, new THREE.Vector3(1, 1, 1));
+          signalHeads.setMatrixAt(instanceIndex, matrix);
+          matrix.compose(
+            headPosition
+              .clone()
+              .addScaledVector(forward, approach * -0.2)
+              .setY(headPosition.y + 0.14),
+            rotation.identity(),
+            new THREE.Vector3(1, 1, 1),
+          );
+          signalLights.setMatrixAt(instanceIndex, matrix);
+          cornerIndex += 1;
+        }
+      }
+    });
+    crossStreets.name = "city-cross-streets";
+    crossStreets.instanceMatrix.needsUpdate = true;
     crosswalk.instanceMatrix.needsUpdate = true;
-    group.add(crossStreet, crosswalk);
+    signalPoles.instanceMatrix.needsUpdate = true;
+    signalHeads.instanceMatrix.needsUpdate = true;
+    signalLights.instanceMatrix.needsUpdate = true;
+    group.add(crossStreets, crosswalk, signalPoles, signalHeads, signalLights);
 
     type BuildingPlacement = {
       road: RoadSample;
@@ -845,8 +934,19 @@ export class WorldScene {
       (_, index) => {
         let localDistance =
           ((index + 0.3 + random() * 0.4) / buildingCount) * CHUNK_LENGTH_M;
-        if (Math.abs(localDistance - CHUNK_LENGTH_M * 0.5) < 10)
-          localDistance += localDistance < CHUNK_LENGTH_M * 0.5 ? -10 : 10;
+        const absoluteDistance = chunk.startDistanceM + localDistance;
+        const nearbyIntersection = crossingDistances.find(
+          (crossingDistance) =>
+            Math.abs(absoluteDistance - crossingDistance) < 14,
+        );
+        if (nearbyIntersection !== undefined) {
+          localDistance += absoluteDistance < nearbyIntersection ? -14 : 14;
+          localDistance = THREE.MathUtils.clamp(
+            localDistance,
+            5,
+            CHUNK_LENGTH_M - 5,
+          );
+        }
         const distance = chunk.startDistanceM + localDistance;
         const road = this.generator.sample(distance);
         const side = index % 2 ? 1 : -1;
@@ -1849,15 +1949,21 @@ export class WorldScene {
       wide: { behind: 15, side: 3.2, height: 7.2, ahead: 18 },
       handlebar: { behind: -0.25, side: 0, height: 1.62, ahead: 26 },
     }[this.cameraSettings.mode];
+    const lookRoad = this.generator.sample(
+      this.rideDistanceM + cameraOffset.ahead,
+    );
     const targetPosition = new THREE.Vector3(
       x - headingX * cameraOffset.behind + sideX * cameraOffset.side,
       y + cameraOffset.height + bob,
       z - headingZ * cameraOffset.behind + sideZ * cameraOffset.side,
     );
     const lookAt = new THREE.Vector3(
-      x + headingX * cameraOffset.ahead,
-      y + 1.7 + road.gradePercent * 0.08,
-      z + headingZ * cameraOffset.ahead,
+      lookRoad.x - this.originX,
+      lookRoad.elevationM -
+        this.originElevation +
+        1.7 +
+        lookRoad.gradePercent * 0.08,
+      -(lookRoad.distanceM - this.originDistanceM),
     );
     const smoothing = this.cameraSettings.reducedMotion
       ? 0.18
