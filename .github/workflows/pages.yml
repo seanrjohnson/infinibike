@@ -1,0 +1,84 @@
+name: Test and deploy GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+  assemble:
+    if: github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out stable release
+        uses: actions/checkout@v7
+        with:
+          ref: stable
+          path: stable-src
+      - name: Check out development revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: dev-src
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            stable-src/package-lock.json
+            dev-src/package-lock.json
+      - uses: actions/configure-pages@v5
+      - name: Build stable release
+        working-directory: stable-src
+        env:
+          VITE_BASE_PATH: /infinibike/
+        run: npm ci && npm run build
+      - name: Build development release
+        working-directory: dev-src
+        env:
+          VITE_BASE_PATH: /infinibike/dev/
+        run: npm ci && npm run build
+      - name: Assemble stable and development site
+        run: |
+          mkdir -p site/dev
+          cp -a stable-src/dist/. site/
+          cp -a dev-src/dist/. site/dev/
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: assemble
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

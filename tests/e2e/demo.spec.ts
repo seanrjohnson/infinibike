@@ -1,0 +1,92 @@
+import { expect, test } from "@playwright/test";
+
+test("completes a demo ride and stores its summary", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/?e2e=1");
+  await expect(page.getByRole("heading", { name: "Infinibike" })).toBeVisible();
+  const canvasImage = await page.screenshot();
+  expect(canvasImage.byteLength).toBeGreaterThan(10_000);
+
+  await page.getByRole("button", { name: "Ride with keys or touch" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Shape your ride" }),
+  ).toBeVisible();
+  await page.locator("#seed").fill("e2e-road");
+  await page.locator("#landscape").selectOption("city");
+  await page.getByRole("button", { name: "Start ride" }).click();
+  await expect(page.getByRole("button", { name: "Pause ride" })).toBeVisible();
+  await expect(
+    page.getByLabel("Elevation profile for the next 1.5 kilometers"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Change camera" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Change camera" }).click();
+  await expect(page.getByText("Wide chase camera")).toBeVisible();
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.cameraMode,
+    )
+    .toBe("wide");
+  const audioButton = page.getByRole("button", { name: "Mute ambient audio" });
+  await audioButton.click();
+  await expect(
+    page.getByRole("button", { name: "Enable ambient audio" }),
+  ).toBeVisible();
+  const gradePreview = page.locator("#grade-preview");
+  expect(await gradePreview.getAttribute("width")).not.toBe("0");
+  expect(await gradePreview.getAttribute("height")).not.toBe("0");
+  await expect(page.locator("#route-preview-high")).toHaveText(/-?\d+ m/);
+
+  await page.keyboard.down("ArrowUp");
+  await page.waitForTimeout(1_500);
+  await page.keyboard.up("ArrowUp");
+  expect(pageErrors).toEqual([]);
+  await expect
+    .poll(async () =>
+      Number(
+        (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.distanceM,
+      ),
+    )
+    .toBeGreaterThan(1);
+  const diagnostics = await page.evaluate(() => window.__INFINIBIKE_DEBUG__);
+  expect(Number(diagnostics?.chunks)).toBeLessThanOrEqual(11);
+  expect(Number(diagnostics?.nearChunks)).toBeLessThanOrEqual(5);
+  expect(Number(diagnostics?.calls)).toBeGreaterThan(0);
+  expect(diagnostics?.landscape).toBe("city");
+  expect(Number(diagnostics?.urbanChunks)).toBeGreaterThan(0);
+
+  await page.getByRole("button", { name: "Pause ride" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Ride paused" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Resume" }).click();
+  await page.getByRole("button", { name: "Pause ride" }).click();
+  await page.getByRole("button", { name: "End ride" }).click();
+  await expect(page.getByRole("heading", { name: /km$/ })).toBeVisible();
+  await expect(page.getByText("e2e-road")).toBeVisible();
+  await expect(page.getByText("City", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Ride analysis" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Export CSV" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Ride history" }).click();
+  await expect(page.getByText("e2e-road")).toBeVisible();
+  await expect(page.getByText("Last 7 days")).toBeVisible();
+});
+
+test("configuration fits a mobile viewport", async ({ page }) => {
+  await page.goto("/?e2e=1");
+  await page.getByRole("button", { name: "Ride with keys or touch" }).click();
+  const heading = page.getByRole("heading", { name: "Shape your ride" });
+  await expect(heading).toBeVisible();
+  const box = await heading.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x + box!.width).toBeLessThanOrEqual(
+    await page.evaluate(() => innerWidth),
+  );
+});
