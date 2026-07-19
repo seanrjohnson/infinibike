@@ -35,4 +35,14 @@ This checklist tracks the next feature work in recommended implementation order.
 - [ ] **Shareable worlds:** encode seeds and environment settings in URLs and support reusable route checkpoints.
 - [ ] **Performance instrumentation:** expose frame time and draw calls, improve pooling, and allow automatic quality recovery.
 
+## Next Graphics Pass
+
+- [ ] **Windows visual QA:** capture countryside and city rides at 1440p in medium and high quality; check side-street connections, rear-block spacing, shadows, fog depth, and chunk transitions while moving.
+- [ ] **City refinement:** add more facade and roof silhouettes, parked vehicles and street furniture, district-specific block layouts, and occasional civic landmarks or plazas.
+- [ ] **Countryside refinement:** add distant settlements, field boundaries, layered forest canopies, more varied mountain profiles, and region-specific color grading.
+- [ ] **Atmosphere:** consider an optional high-quality post-processing tier for subtle bloom, ambient occlusion, and focus effects after the expanded view distance is visually tuned.
+- [ ] **Trainer verification:** retest watts, virtual speed, forward pedaling, and signed hill resistance on the physical bike after moving development to Windows.
+
+The July graphics pass expands medium/high streaming depth, replaces short exponential fog with longer linear atmospheric perspective, widens terrain, adds countryside field/grove/horizon layers, and turns the city into connected blocks with parallel streets, rear buildings, rooftop fixtures, lane markings, and additional trees. Countryside rendered correctly under Linux SwiftShader; city diagnostics were valid, but VM screenshot capture could not acquire an idle compositor frame. Complete city visual QA on native Windows before further density tuning.
+
 Implementation should keep Infinibike static, local-first, deterministic by seed, and safe around optional FTMS resistance writes.

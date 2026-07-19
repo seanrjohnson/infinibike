@@ -43,11 +43,11 @@ npm run test:e2e
 - `src/world/` generates deterministic road chunks and renders the streamed Three.js environment.
 - `src/app.ts` owns setup, calibration, ride lifecycle, resistance restoration, and DOM UI state.
 
-World chunks are deterministic by seed and absolute index. The renderer retains two chunks behind and five to eight ahead, disposes retired GPU resources, and rebases every two kilometers while ride distance remains absolute.
+World chunks are deterministic by seed and absolute index. The renderer retains two chunks behind and five, ten, or twelve ahead according to quality, disposes retired GPU resources, and rebases every two kilometers while ride distance remains absolute.
 
-The city landscape applies the same bounded chunk lifecycle to an instanced urban kit inspired by Infinitown's varied town-block vocabulary; it does not load external city models or textures.
+The city landscape applies the same bounded chunk lifecycle to an instanced urban kit inspired by Infinitown's varied town-block vocabulary. Cross streets connect to parallel side streets, neighboring building rows, rooftop fixtures, sidewalks, lane markings, and planted block edges without loading external city models or textures.
 
-Near chunks use full terrain resolution while distant chunks use simplified meshes. Smooth region weights blend meadow, woodland, lakeside, and highland scenery kits, and the same seed deterministically places villages, bridges, tunnels, waterfalls, overlooks, windmills, and summit gates. Planned work is tracked in [`docs/roadmap.md`](docs/roadmap.md).
+Near chunks use full terrain resolution while distant chunks use simplified meshes. Smooth region weights blend meadow, woodland, lakeside, and highland scenery kits; field bands, midground groves, and distant landforms add depth beyond the roadside layer. The same seed deterministically places villages, bridges, tunnels, waterfalls, overlooks, windmills, and summit gates. Planned work is tracked in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## GitHub Pages
 
