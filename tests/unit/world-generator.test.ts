@@ -5,6 +5,7 @@ import {
   cityIntersectionBranches,
   cityIntersectionContext,
   cityIntersectionsForChunk,
+  cityParkingDensity,
   footprintIntersectsStreetSegments,
   WorldGenerator,
   dominantRegion,
@@ -40,6 +41,16 @@ describe("WorldGenerator", () => {
       contexts.map((_, index) =>
         cityIntersectionContext("street-grid", 50 + index * 100),
       ),
+    );
+  });
+
+  it("varies parked-car density deterministically by city chunk", () => {
+    const densities = Array.from({ length: 80 }, (_, index) =>
+      cityParkingDensity("street-grid", index),
+    );
+    expect(new Set(densities)).toEqual(new Set(["light", "medium", "heavy"]));
+    expect(densities).toEqual(
+      densities.map((_, index) => cityParkingDensity("street-grid", index)),
     );
   });
 

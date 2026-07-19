@@ -61,6 +61,18 @@ export function cityIntersectionContext(
   return roll < 26 ? "edge" : roll < 66 ? "neighborhood" : "urban-core";
 }
 
+export type CityParkingDensity = "light" | "medium" | "heavy";
+
+export function cityParkingDensity(
+  seed: string,
+  chunkIndex: number,
+): CityParkingDensity {
+  const normalizedSeed = seed.trim().toLowerCase() || "open-road";
+  const roll =
+    hashString(`${normalizedSeed}:parking-density:${chunkIndex}`) % 100;
+  return roll < 27 ? "light" : roll < 70 ? "medium" : "heavy";
+}
+
 export type PlanarStreetSegment = {
   start: { x: number; z: number };
   end: { x: number; z: number };
