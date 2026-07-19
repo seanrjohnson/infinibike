@@ -7,6 +7,12 @@ import { DEFAULT_ENVIRONMENT } from "../domain/environment";
 import { hashString, seededRandom } from "../domain/random";
 import type { RideSnapshot } from "../domain/ride-model";
 import {
+  ASSET_BASE_DIMENSIONS,
+  AssetLibrary,
+  type AssetKey,
+} from "./asset-library";
+import { selectBuildingAsset } from "./building-catalog";
+import {
   CHUNK_LENGTH_M,
   ROAD_HALF_WIDTH_M,
   cityIntersectionContext,
@@ -125,6 +131,7 @@ const REGION_FOG_TINTS = {
 
 function disposeObject(root: THREE.Object3D): void {
   root.traverse((object) => {
+    if (object.userData.sharedAsset === true) return;
     const mesh = object as THREE.Mesh;
     const instancedMesh = object as THREE.InstancedMesh;
     if (instancedMesh.isInstancedMesh) instancedMesh.dispose();
@@ -174,6 +181,7 @@ export class WorldScene {
   private readonly sky: THREE.Mesh;
   private readonly camera = new THREE.PerspectiveCamera(58, 1, 0.1, 1_800);
   private readonly worldRoot = new THREE.Group();
+  private readonly assetLibrary = new AssetLibrary();
   private startApron?: THREE.Group;
   private readonly cyclist = new THREE.Group();
   private readonly wheels: THREE.Group[] = [];
@@ -298,6 +306,12 @@ export class WorldScene {
     this.createCyclist();
     this.scene.add(this.cyclist);
     this.configure(DEFAULT_ENVIRONMENT);
+    void this.assetLibrary.ready.then(() => {
+      if (!this.assetLibrary.isReady) return;
+      this.clearChunks();
+      this.createMovingScenery();
+      this.ensureChunks(this.rideDistanceM);
+    });
     this.resize();
     if (new URLSearchParams(location.search).has("visualQa")) {
       window.__INFINIBIKE_VISUAL_QA__ = {
@@ -456,6 +470,8 @@ export class WorldScene {
       ),
       cadenceRpm: this.cadenceRpm,
       movingActors: this.movingActors.length,
+      assetLibrary: this.assetLibrary.isReady ? "ready" : "loading",
+      assetTemplates: this.assetLibrary.size,
       visibleMovingActors: this.movingActors.filter(
         ({ object }) => object.visible,
       ).length,
@@ -999,6 +1015,30 @@ export class WorldScene {
   ): THREE.Group {
     if (kind === "sky-birds" || kind === "takeoff-flock")
       return this.createBirdFlock(kind === "sky-birds" ? 7 : 11, random);
+    const personKeys = [
+      "person_a",
+      "person_b",
+      "person_c",
+      "person_d",
+      "person_e",
+      "person_f",
+    ] as const;
+    const carKeys = [
+      "car_sedan",
+      "car_hatchback",
+      "car_wagon",
+      "car_pickup",
+      "car_taxi",
+      "car_van",
+    ] as const;
+    const assetKey: AssetKey =
+      kind === "pedestrian"
+        ? personKeys[Math.floor(random() * personKeys.length)]!
+        : kind === "car"
+          ? carKeys[Math.floor(random() * carKeys.length)]!
+          : kind;
+    const asset = this.assetLibrary.instantiate(assetKey);
+    if (asset) return asset;
     const group = new THREE.Group();
     const lambert = (color: number): THREE.MeshLambertMaterial =>
       new THREE.MeshLambertMaterial({ color });
@@ -3157,6 +3197,24 @@ export class WorldScene {
           (index % 6) * 34 +
           (rowRandom() - 0.5) * 5;
         const offset = fieldSide * (34 + band * 12 + rowRandom() * 3);
+        if (this.assetLibrary.isReady) {
+          const road = this.generator.sample(rowDistance);
+          const crop = this.assetLibrary.instantiate(
+            chunk.index % 2 === 0 ? "crop_corn" : "crop_wheat",
+          );
+          if (crop) {
+            crop.position.copy(
+              this.roadOffsetPosition(
+                road,
+                offset,
+                this.terrainElevationAt(road, offset) - road.elevationM,
+              ),
+            );
+            crop.rotation.y = -road.heading;
+            crop.scale.set(0.82, 0.82, 4.2);
+            group.add(crop);
+          }
+        }
         for (let segment = 0; segment < cropRowSegments; segment += 1) {
           const distance = THREE.MathUtils.clamp(
             rowDistance +
@@ -3186,7 +3244,11 @@ export class WorldScene {
               offset,
             ),
             rotation,
-            new THREE.Vector3(blocked ? 0 : 1, 1, 1),
+            new THREE.Vector3(
+              blocked || this.assetLibrary.isReady ? 0 : 1,
+              1,
+              1,
+            ),
           );
           cropRows.setMatrixAt(index * cropRowSegments + segment, matrix);
         }
@@ -3197,14 +3259,9 @@ export class WorldScene {
       group.add(cropRows);
 
       if (detail === "near") {
-        const baleCount = 7;
+        const baleCount = this.assetLibrary.isReady ? 3 : 7;
         const baleRandom = seededRandom(chunk.scenerySeed ^ 0xba1e);
-        const bales = new THREE.InstancedMesh(
-          new THREE.CylinderGeometry(0.62, 0.62, 1.15, 10),
-          new THREE.MeshLambertMaterial({ color: 0xc4a752 }),
-          baleCount,
-        );
-        for (let index = 0; index < baleCount; index += 1) {
+        const balePlacements = Array.from({ length: baleCount }, (_, index) => {
           const distance = chunk.startDistanceM + 20 + baleRandom() * 210;
           const road = this.generator.sample(distance);
           const side = index % 2 ? 1 : -1;
@@ -3215,77 +3272,122 @@ export class WorldScene {
             Math.sin(road.heading),
           );
           const groundY = this.terrainElevationAt(road, offset);
-          rotation.setFromEuler(
-            euler.set(0, -road.heading + baleRandom() * 0.25, Math.PI / 2),
+          return {
+            position: new THREE.Vector3(
+              road.x,
+              groundY,
+              road.z,
+            ).addScaledVector(across, offset),
+            heading: -road.heading + baleRandom() * 0.25,
+          };
+        });
+        if (this.assetLibrary.isReady) {
+          balePlacements.forEach((placement) => {
+            const bales = this.assetLibrary.instantiate("hay_bales");
+            if (!bales) return;
+            bales.position.copy(placement.position);
+            bales.rotation.y = placement.heading;
+            bales.scale.setScalar(0.85 + baleRandom() * 0.18);
+            group.add(bales);
+          });
+        } else {
+          const bales = new THREE.InstancedMesh(
+            new THREE.CylinderGeometry(0.62, 0.62, 1.15, 10),
+            new THREE.MeshLambertMaterial({ color: 0xc4a752 }),
+            baleCount,
           );
-          matrix.compose(
-            new THREE.Vector3(road.x, groundY + 0.62, road.z).addScaledVector(
-              across,
-              offset,
-            ),
-            rotation,
-            new THREE.Vector3(1, 1, 1),
-          );
-          bales.setMatrixAt(index, matrix);
+          balePlacements.forEach((placement, index) => {
+            rotation.setFromEuler(euler.set(0, placement.heading, Math.PI / 2));
+            matrix.compose(
+              placement.position.clone().setY(placement.position.y + 0.62),
+              rotation,
+              new THREE.Vector3(1, 1, 1),
+            );
+            bales.setMatrixAt(index, matrix);
+          });
+          bales.name = "countryside-hay-bales";
+          bales.instanceMatrix.needsUpdate = true;
+          group.add(bales);
         }
-        bales.name = "countryside-hay-bales";
-        bales.instanceMatrix.needsUpdate = true;
-        group.add(bales);
       }
     }
 
     if (detail === "near" && theme === "pasture") {
       const animalCount = 8;
       const animalRandom = seededRandom(chunk.scenerySeed ^ 0xa11a1);
-      const animalBodies = new THREE.InstancedMesh(
-        new THREE.IcosahedronGeometry(0.7, 1),
-        new THREE.MeshLambertMaterial({ color: 0xffffff }),
-        animalCount,
-      );
-      const animalHeads = new THREE.InstancedMesh(
-        new THREE.IcosahedronGeometry(0.34, 1),
-        new THREE.MeshLambertMaterial({ color: 0xffffff }),
-        animalCount,
-      );
-      for (let index = 0; index < animalCount; index += 1) {
-        const distance = chunk.startDistanceM + 25 + animalRandom() * 200;
-        const road = this.generator.sample(distance);
-        const side = index % 2 ? 1 : -1;
-        const offset = side * (22 + animalRandom() * 48);
-        const heading = animalRandom() * Math.PI * 2;
-        const body = this.roadOffsetPosition(road, offset, 0.72);
-        rotation.setFromEuler(euler.set(0, heading, 0));
-        matrix.compose(body, rotation, new THREE.Vector3(1.35, 0.78, 0.72));
-        animalBodies.setMatrixAt(index, matrix);
-        animalBodies.setColorAt(
-          index,
-          new THREE.Color(index % 3 === 0 ? 0x8a6548 : 0xd7d3c2),
+      if (this.assetLibrary.isReady) {
+        for (let index = 0; index < animalCount; index += 1) {
+          const distance = chunk.startDistanceM + 25 + animalRandom() * 200;
+          const road = this.generator.sample(distance);
+          const side = index % 2 ? 1 : -1;
+          const offset = side * (22 + animalRandom() * 48);
+          const pastureAnimals = [
+            "cow",
+            "sheep",
+            "horse",
+            "deer",
+            "dog",
+          ] as const;
+          const animal = this.assetLibrary.instantiate(
+            pastureAnimals[index % pastureAnimals.length]!,
+          );
+          if (!animal) continue;
+          animal.position.copy(this.roadOffsetPosition(road, offset, 0));
+          animal.rotation.y = animalRandom() * Math.PI * 2;
+          animal.scale.setScalar(0.85 + animalRandom() * 0.2);
+          group.add(animal);
+        }
+      } else {
+        const animalBodies = new THREE.InstancedMesh(
+          new THREE.IcosahedronGeometry(0.7, 1),
+          new THREE.MeshLambertMaterial({ color: 0xffffff }),
+          animalCount,
         );
-        const headDirection = new THREE.Vector3(
-          Math.sin(heading),
-          0,
-          -Math.cos(heading),
+        const animalHeads = new THREE.InstancedMesh(
+          new THREE.IcosahedronGeometry(0.34, 1),
+          new THREE.MeshLambertMaterial({ color: 0xffffff }),
+          animalCount,
         );
-        matrix.compose(
-          body
-            .clone()
-            .addScaledVector(headDirection, 0.85)
-            .setY(body.y + 0.05),
-          rotation,
-          new THREE.Vector3(0.9, 0.9, 0.9),
-        );
-        animalHeads.setMatrixAt(index, matrix);
-        animalHeads.setColorAt(
-          index,
-          new THREE.Color(index % 3 === 0 ? 0x594535 : 0xb9b5a7),
-        );
+        for (let index = 0; index < animalCount; index += 1) {
+          const distance = chunk.startDistanceM + 25 + animalRandom() * 200;
+          const road = this.generator.sample(distance);
+          const side = index % 2 ? 1 : -1;
+          const offset = side * (22 + animalRandom() * 48);
+          const heading = animalRandom() * Math.PI * 2;
+          const body = this.roadOffsetPosition(road, offset, 0.72);
+          rotation.setFromEuler(euler.set(0, heading, 0));
+          matrix.compose(body, rotation, new THREE.Vector3(1.35, 0.78, 0.72));
+          animalBodies.setMatrixAt(index, matrix);
+          animalBodies.setColorAt(
+            index,
+            new THREE.Color(index % 3 === 0 ? 0x8a6548 : 0xd7d3c2),
+          );
+          const headDirection = new THREE.Vector3(
+            Math.sin(heading),
+            0,
+            -Math.cos(heading),
+          );
+          matrix.compose(
+            body
+              .clone()
+              .addScaledVector(headDirection, 0.85)
+              .setY(body.y + 0.05),
+            rotation,
+            new THREE.Vector3(0.9, 0.9, 0.9),
+          );
+          animalHeads.setMatrixAt(index, matrix);
+          animalHeads.setColorAt(
+            index,
+            new THREE.Color(index % 3 === 0 ? 0x594535 : 0xb9b5a7),
+          );
+        }
+        animalBodies.name = "countryside-pasture-animals";
+        animalBodies.instanceMatrix.needsUpdate = true;
+        animalBodies.instanceColor!.needsUpdate = true;
+        animalHeads.instanceMatrix.needsUpdate = true;
+        animalHeads.instanceColor!.needsUpdate = true;
+        group.add(animalBodies, animalHeads);
       }
-      animalBodies.name = "countryside-pasture-animals";
-      animalBodies.instanceMatrix.needsUpdate = true;
-      animalBodies.instanceColor!.needsUpdate = true;
-      animalHeads.instanceMatrix.needsUpdate = true;
-      animalHeads.instanceColor!.needsUpdate = true;
-      group.add(animalBodies, animalHeads);
     }
 
     if (
@@ -3542,16 +3644,20 @@ export class WorldScene {
     const utilitySide =
       hashString(`${this.settings.seed}:utility-side`) % 2 === 0 ? 1 : -1;
     const polePositions: THREE.Vector3[] = [];
-    const poles = new THREE.InstancedMesh(
-      new THREE.CylinderGeometry(0.11, 0.16, 7.4, 7),
-      new THREE.MeshLambertMaterial({ color: 0x5c4936 }),
-      poleCount,
-    );
-    const crossbars = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(3.1, 0.16, 0.16),
-      new THREE.MeshLambertMaterial({ color: 0x4d4033 }),
-      poleCount,
-    );
+    const poles = this.assetLibrary.isReady
+      ? undefined
+      : new THREE.InstancedMesh(
+          new THREE.CylinderGeometry(0.11, 0.16, 7.4, 7),
+          new THREE.MeshLambertMaterial({ color: 0x5c4936 }),
+          poleCount,
+        );
+    const crossbars = this.assetLibrary.isReady
+      ? undefined
+      : new THREE.InstancedMesh(
+          new THREE.BoxGeometry(3.1, 0.16, 0.16),
+          new THREE.MeshLambertMaterial({ color: 0x4d4033 }),
+          poleCount,
+        );
     for (let index = 0; index < poleCount; index += 1) {
       const distance =
         chunk.startDistanceM + ((index + 0.5) / poleCount) * CHUNK_LENGTH_M;
@@ -3568,22 +3674,34 @@ export class WorldScene {
         offset,
       );
       polePositions.push(base);
-      matrix.compose(
-        base.clone().setY(groundY + 3.7),
-        rotation.identity(),
-        new THREE.Vector3(1, 1, 1),
-      );
-      poles.setMatrixAt(index, matrix);
-      rotation.setFromEuler(euler.set(0, -road.heading, 0));
-      matrix.compose(
-        base.clone().setY(groundY + 7.15),
-        rotation,
-        new THREE.Vector3(1, 1, 1),
-      );
-      crossbars.setMatrixAt(index, matrix);
+      if (this.assetLibrary.isReady) {
+        const pole = this.assetLibrary.instantiate("utility_pole");
+        if (pole) {
+          pole.position.copy(base);
+          pole.rotation.y = -road.heading;
+          group.add(pole);
+        }
+      } else {
+        matrix.compose(
+          base.clone().setY(groundY + 3.7),
+          rotation.identity(),
+          new THREE.Vector3(1, 1, 1),
+        );
+        poles!.setMatrixAt(index, matrix);
+        rotation.setFromEuler(euler.set(0, -road.heading, 0));
+        matrix.compose(
+          base.clone().setY(groundY + 7.15),
+          rotation,
+          new THREE.Vector3(1, 1, 1),
+        );
+        crossbars!.setMatrixAt(index, matrix);
+      }
     }
-    poles.instanceMatrix.needsUpdate = true;
-    crossbars.instanceMatrix.needsUpdate = true;
+    if (poles && crossbars) {
+      poles.instanceMatrix.needsUpdate = true;
+      crossbars.instanceMatrix.needsUpdate = true;
+      group.add(poles, crossbars);
+    }
     const boundaryPolePosition = (distance: number): THREE.Vector3 => {
       const road = this.generator.sample(distance);
       const across = new THREE.Vector3(
@@ -3635,7 +3753,7 @@ export class WorldScene {
       }),
     );
     wires.name = "countryside-utility-wires";
-    group.add(poles, crossbars, wires);
+    group.add(wires);
 
     if (
       detail === "near" &&
@@ -3653,39 +3771,53 @@ export class WorldScene {
         Math.sin(road.heading),
       );
       const center = this.roadOffsetPosition(road, offset);
-      const barn = new THREE.Mesh(
-        new THREE.BoxGeometry(11, 6.5, 16),
-        new THREE.MeshLambertMaterial({ color: 0x984c3d }),
-      );
-      barn.position.copy(center).setY(center.y + 3.25);
-      barn.rotation.y = -road.heading;
-      const barnRoof = new THREE.Mesh(
-        new THREE.ConeGeometry(9.2, 4.2, 4),
-        new THREE.MeshLambertMaterial({ color: 0x55544c }),
-      );
-      barnRoof.position.copy(center).setY(center.y + 8.1);
-      barnRoof.rotation.y = -road.heading + Math.PI / 4;
-      const silo = new THREE.Mesh(
-        new THREE.CylinderGeometry(2.5, 2.7, 9.5, 12),
-        new THREE.MeshStandardMaterial({
-          color: 0x9da6a0,
-          roughness: 0.55,
-          metalness: 0.18,
-        }),
-      );
-      silo.position
-        .copy(center)
-        .addScaledVector(across, side * 8.5)
-        .setY(center.y + 4.75);
-      const siloRoof = new THREE.Mesh(
-        new THREE.ConeGeometry(2.75, 2.4, 12),
-        new THREE.MeshLambertMaterial({ color: 0x737b76 }),
-      );
-      siloRoof.position.copy(silo.position).setY(center.y + 10.7);
-      const farmstead = new THREE.Group();
-      farmstead.name = "countryside-farmstead";
-      farmstead.add(barn, barnRoof, silo, siloRoof);
-      group.add(farmstead);
+      if (this.assetLibrary.isReady) {
+        const barn = this.assetLibrary.instantiate("barn");
+        const silo = this.assetLibrary.instantiate("silo");
+        if (barn) {
+          barn.position.copy(center);
+          barn.rotation.y = -road.heading;
+          group.add(barn);
+        }
+        if (silo) {
+          silo.position.copy(center).addScaledVector(across, side * 8.5);
+          group.add(silo);
+        }
+      } else {
+        const barn = new THREE.Mesh(
+          new THREE.BoxGeometry(11, 6.5, 16),
+          new THREE.MeshLambertMaterial({ color: 0x984c3d }),
+        );
+        barn.position.copy(center).setY(center.y + 3.25);
+        barn.rotation.y = -road.heading;
+        const barnRoof = new THREE.Mesh(
+          new THREE.ConeGeometry(9.2, 4.2, 4),
+          new THREE.MeshLambertMaterial({ color: 0x55544c }),
+        );
+        barnRoof.position.copy(center).setY(center.y + 8.1);
+        barnRoof.rotation.y = -road.heading + Math.PI / 4;
+        const silo = new THREE.Mesh(
+          new THREE.CylinderGeometry(2.5, 2.7, 9.5, 12),
+          new THREE.MeshStandardMaterial({
+            color: 0x9da6a0,
+            roughness: 0.55,
+            metalness: 0.18,
+          }),
+        );
+        silo.position
+          .copy(center)
+          .addScaledVector(across, side * 8.5)
+          .setY(center.y + 4.75);
+        const siloRoof = new THREE.Mesh(
+          new THREE.ConeGeometry(2.75, 2.4, 12),
+          new THREE.MeshLambertMaterial({ color: 0x737b76 }),
+        );
+        siloRoof.position.copy(silo.position).setY(center.y + 10.7);
+        const farmstead = new THREE.Group();
+        farmstead.name = "countryside-farmstead";
+        farmstead.add(barn, barnRoof, silo, siloRoof);
+        group.add(farmstead);
+      }
     }
     return group;
   }
@@ -4694,7 +4826,7 @@ export class WorldScene {
         );
       },
     );
-    const buildings = [
+    const allBuildings = [
       ...routeBuildings,
       ...branchBuildings.filter((building) => {
         const footprint = {
@@ -4723,6 +4855,35 @@ export class WorldScene {
         );
       }),
     ];
+    const authoredStride = detail === "near" ? 4 : 8;
+    const authoredBuildings = this.assetLibrary.isReady
+      ? allBuildings.filter((_, index) => index % authoredStride === 0)
+      : [];
+    const buildings = this.assetLibrary.isReady
+      ? allBuildings.filter((_, index) => index % authoredStride !== 0)
+      : allBuildings;
+    const buildingAssetRandom = seededRandom(chunk.scenerySeed ^ 0xb01d1);
+    if (this.assetLibrary.isReady) {
+      authoredBuildings.forEach((building) => {
+        const key = selectBuildingAsset(district, buildingAssetRandom());
+        const asset = this.assetLibrary.instantiate(key);
+        const base = ASSET_BASE_DIMENSIONS[key];
+        if (!asset || !base) return;
+        asset.position.set(
+          building.center.x,
+          building.center.y - building.height / 2 + 0.16,
+          building.center.z,
+        );
+        asset.rotation.y =
+          -building.road.heading + (building.side * Math.PI) / 2;
+        asset.scale.set(
+          building.frontage / base[0],
+          building.height / base[1],
+          building.depth / base[2],
+        );
+        group.add(asset);
+      });
+    }
     const bodies = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshStandardMaterial({
@@ -5140,6 +5301,26 @@ export class WorldScene {
           ),
         };
       });
+      if (this.assetLibrary.isReady) {
+        const parkedCarKeys = [
+          "car_hatchback",
+          "car_sedan",
+          "car_wagon",
+          "car_pickup",
+          "car_taxi",
+          "car_van",
+        ] as const;
+        vehicles.forEach((vehicle, index) => {
+          const car = this.assetLibrary.instantiate(
+            parkedCarKeys[index % parkedCarKeys.length]!,
+          );
+          if (!car) return;
+          car.position.copy(vehicle.center);
+          car.rotation.y = -vehicle.road.heading + (index % 2 ? Math.PI : 0);
+          group.add(car);
+        });
+      }
+      const legacyVehicles = this.assetLibrary.isReady ? [] : vehicles;
       const carBodies = new THREE.InstancedMesh(
         new THREE.BoxGeometry(1, 1, 1),
         new THREE.MeshStandardMaterial({
@@ -5147,7 +5328,7 @@ export class WorldScene {
           roughness: 0.68,
           metalness: 0.16,
         }),
-        vehicleCount,
+        legacyVehicles.length,
       );
       const carCabins = new THREE.InstancedMesh(
         new THREE.BoxGeometry(1, 1, 1),
@@ -5156,19 +5337,19 @@ export class WorldScene {
           roughness: 0.32,
           metalness: 0.12,
         }),
-        vehicleCount,
+        legacyVehicles.length,
       );
       const carWheels = new THREE.InstancedMesh(
         new THREE.CylinderGeometry(0.34, 0.34, 0.18, 9),
         new THREE.MeshLambertMaterial({ color: 0x1f2728 }),
-        vehicleCount * 4,
+        legacyVehicles.length * 4,
       );
       const carLights = new THREE.InstancedMesh(
         new THREE.BoxGeometry(0.1, 0.18, 0.34),
         new THREE.MeshBasicMaterial({ color: 0xffffff }),
-        vehicleCount * 4,
+        legacyVehicles.length * 4,
       );
-      vehicles.forEach((vehicle, index) => {
+      legacyVehicles.forEach((vehicle, index) => {
         rotation.setFromEuler(euler.set(0, -vehicle.road.heading, 0));
         matrix.compose(
           vehicle.center.clone().setY(vehicle.center.y + 0.38),
@@ -5237,11 +5418,11 @@ export class WorldScene {
       carBodies.name = "city-parked-vehicles";
       carLights.userData.disableShadows = true;
       carBodies.instanceMatrix.needsUpdate = true;
-      carBodies.instanceColor!.needsUpdate = true;
+      if (carBodies.instanceColor) carBodies.instanceColor.needsUpdate = true;
       carCabins.instanceMatrix.needsUpdate = true;
       carWheels.instanceMatrix.needsUpdate = true;
       carLights.instanceMatrix.needsUpdate = true;
-      carLights.instanceColor!.needsUpdate = true;
+      if (carLights.instanceColor) carLights.instanceColor.needsUpdate = true;
       group.add(carBodies, carCabins, carWheels, carLights);
 
       const furnitureCount = district === "park" ? 14 : 8;
@@ -5273,6 +5454,29 @@ export class WorldScene {
       bollards.name = "city-street-furniture";
       bollards.instanceMatrix.needsUpdate = true;
       group.add(bollards);
+      if (this.assetLibrary.isReady) {
+        const propKeys = [
+          "fire_hydrant",
+          "mailbox",
+          "trash_bin",
+          "bike_rack",
+          "bus_shelter",
+          "traffic_light",
+        ] as const;
+        propKeys.forEach((key, index) => {
+          const distance =
+            chunk.startDistanceM +
+            ((index + 0.5) / propKeys.length) * CHUNK_LENGTH_M;
+          const road = this.generator.sample(distance);
+          const side = index % 2 ? 1 : -1;
+          const prop = this.assetLibrary.instantiate(key);
+          if (!prop) return;
+          prop.position.copy(this.roadOffsetPosition(road, side * 8.1, 0));
+          prop.rotation.y = -road.heading + (side > 0 ? 0 : Math.PI);
+          prop.scale.setScalar(key === "bus_shelter" ? 0.85 : 1);
+          group.add(prop);
+        });
+      }
 
       const benchCount =
         district === "park" ? 7 : district === "downtown" ? 4 : 2;
@@ -5377,6 +5581,19 @@ export class WorldScene {
     }
 
     const lightCount = detail === "near" ? 16 : 8;
+    if (this.assetLibrary.isReady && detail === "near") {
+      for (let index = 0; index < lightCount; index += 1) {
+        const distance =
+          chunk.startDistanceM + ((index + 0.5) / lightCount) * CHUNK_LENGTH_M;
+        const road = this.generator.sample(distance);
+        const side = index % 2 ? 1 : -1;
+        const lamp = this.assetLibrary.instantiate("streetlamp");
+        if (!lamp) continue;
+        lamp.position.copy(this.roadOffsetPosition(road, side * 7.55, 0));
+        lamp.rotation.y = -road.heading + (side > 0 ? 0 : Math.PI);
+        group.add(lamp);
+      }
+    }
     const poles = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.055, 0.075, 4.4, 6),
       new THREE.MeshLambertMaterial({ color: 0x343d3d }),
@@ -5389,6 +5606,8 @@ export class WorldScene {
       }),
       lightCount,
     );
+    const legacyLampScale =
+      this.assetLibrary.isReady && detail === "near" ? 0 : 1;
     for (let index = 0; index < lightCount; index += 1) {
       const distance =
         chunk.startDistanceM + ((index + 0.5) / lightCount) * CHUNK_LENGTH_M;
@@ -5400,13 +5619,17 @@ export class WorldScene {
         road.elevationM + 2.1,
         road.z + Math.sin(road.heading) * offset,
       );
-      matrix.compose(position, rotation.identity(), new THREE.Vector3(1, 1, 1));
+      matrix.compose(
+        position,
+        rotation.identity(),
+        new THREE.Vector3(legacyLampScale, legacyLampScale, legacyLampScale),
+      );
       poles.setMatrixAt(index, matrix);
       rotation.setFromEuler(euler.set(0, -road.heading, 0));
       matrix.compose(
         position.clone().add(new THREE.Vector3(0, 2.12, 0)),
         rotation,
-        new THREE.Vector3(1, 1, 1),
+        new THREE.Vector3(legacyLampScale, legacyLampScale, legacyLampScale),
       );
       lamps.setMatrixAt(index, matrix);
     }
@@ -5441,6 +5664,32 @@ export class WorldScene {
       const curbTreeCount = district === "park" ? 18 : 6;
       const blockTreeCount = district === "park" ? 26 : 12;
       const treeCount = curbTreeCount + blockTreeCount;
+      const treeRandom = seededRandom(chunk.scenerySeed ^ 0x72ee);
+      if (this.assetLibrary.isReady) {
+        for (let index = 0; index < treeCount; index += 1) {
+          const distance =
+            chunk.startDistanceM +
+            ((index + 0.35 + treeRandom() * 0.3) / treeCount) * CHUNK_LENGTH_M;
+          const road = this.generator.sample(distance);
+          const side = index % 2 ? 1 : -1;
+          const offset =
+            side * (index < curbTreeCount ? 8.5 : parallelStreetOffset - 6.5);
+          const cityTreeKeys = [
+            "tree_oak",
+            "tree_maple",
+            "tree_birch",
+            "tree_flowering",
+          ] as const;
+          const tree = this.assetLibrary.instantiate(
+            cityTreeKeys[index % cityTreeKeys.length]!,
+          );
+          if (!tree) continue;
+          tree.position.copy(this.roadOffsetPosition(road, offset, 0));
+          tree.rotation.y = treeRandom() * Math.PI * 2;
+          tree.scale.setScalar(0.62 + treeRandom() * 0.22);
+          group.add(tree);
+        }
+      }
       const trunks = new THREE.InstancedMesh(
         new THREE.CylinderGeometry(0.12, 0.18, 1.7, 6),
         new THREE.MeshLambertMaterial({ color: 0x73523a }),
@@ -5451,7 +5700,7 @@ export class WorldScene {
         new THREE.MeshLambertMaterial({ color: 0x537558 }),
         treeCount,
       );
-      const treeRandom = seededRandom(chunk.scenerySeed ^ 0x72ee);
+      const legacyTreeScale = this.assetLibrary.isReady ? 0 : 1;
       for (let index = 0; index < treeCount; index += 1) {
         const distance =
           chunk.startDistanceM +
@@ -5468,13 +5717,13 @@ export class WorldScene {
         matrix.compose(
           position,
           rotation.identity(),
-          new THREE.Vector3(1, 1, 1),
+          new THREE.Vector3(legacyTreeScale, legacyTreeScale, legacyTreeScale),
         );
         trunks.setMatrixAt(index, matrix);
         matrix.compose(
           position.clone().add(new THREE.Vector3(0, 1.5, 0)),
           rotation.identity(),
-          new THREE.Vector3(1, 1, 1),
+          new THREE.Vector3(legacyTreeScale, legacyTreeScale, legacyTreeScale),
         );
         crowns.setMatrixAt(index, matrix);
       }
@@ -5582,17 +5831,39 @@ export class WorldScene {
       const ground = groundPlacement(pineRandom);
       return { ...ground, scale: 0.65 + pineRandom() * 1.25 };
     });
+    const authoredPineStride = 1;
+    if (this.assetLibrary.isReady) {
+      pinePlacements
+        .filter((_, index) => index % authoredPineStride === 0)
+        .forEach((placement) => {
+          const tree = this.assetLibrary.instantiate("tree_pine");
+          if (!tree) return;
+          tree.position.set(
+            placement.road.x +
+              Math.cos(placement.road.heading) * placement.offset,
+            placement.baseY,
+            placement.road.z +
+              Math.sin(placement.road.heading) * placement.offset,
+          );
+          tree.rotation.y = pineRandom() * Math.PI * 2;
+          tree.scale.setScalar(placement.scale * 0.72);
+          group.add(tree);
+        });
+    }
+    const legacyPinePlacements = this.assetLibrary.isReady
+      ? pinePlacements.filter((_, index) => index % authoredPineStride !== 0)
+      : pinePlacements;
     const pineTrunks = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.14, 0.22, 2.1, 6),
       new THREE.MeshLambertMaterial({ color: 0x6f5136 }),
-      pineCount,
+      legacyPinePlacements.length,
     );
     const pineCrowns = new THREE.InstancedMesh(
       new THREE.ConeGeometry(1.25, 3.8, 7),
       new THREE.MeshLambertMaterial({ color: 0x355c49 }),
-      pineCount,
+      legacyPinePlacements.length,
     );
-    pinePlacements.forEach((placement, index) => {
+    legacyPinePlacements.forEach((placement, index) => {
       const scale = new THREE.Vector3(
         placement.scale,
         placement.scale,
@@ -5638,19 +5909,51 @@ export class WorldScene {
       const ground = groundPlacement(deciduousRandom, 12, 82);
       return { ...ground, scale: 0.7 + deciduousRandom() * 1.05 };
     });
+    const authoredDeciduousStride = 1;
+    if (this.assetLibrary.isReady) {
+      deciduousPlacements
+        .filter((_, index) => index % authoredDeciduousStride === 0)
+        .forEach((placement, index) => {
+          const countrysideTreeKeys = [
+            "tree_oak",
+            "tree_maple",
+            "tree_birch",
+            "tree_flowering",
+          ] as const;
+          const tree = this.assetLibrary.instantiate(
+            countrysideTreeKeys[index % countrysideTreeKeys.length]!,
+          );
+          if (!tree) return;
+          tree.position.set(
+            placement.road.x +
+              Math.cos(placement.road.heading) * placement.offset,
+            placement.baseY,
+            placement.road.z +
+              Math.sin(placement.road.heading) * placement.offset,
+          );
+          tree.rotation.y = deciduousRandom() * Math.PI * 2;
+          tree.scale.setScalar(placement.scale * 0.7);
+          group.add(tree);
+        });
+    }
+    const legacyDeciduousPlacements = this.assetLibrary.isReady
+      ? deciduousPlacements.filter(
+          (_, index) => index % authoredDeciduousStride !== 0,
+        )
+      : deciduousPlacements;
     const deciduousTrunks = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.2, 0.28, 2.4, 7),
       new THREE.MeshLambertMaterial({ color: 0x77533a }),
-      deciduousCount,
+      legacyDeciduousPlacements.length,
     );
     const deciduousCrowns = new THREE.InstancedMesh(
       new THREE.IcosahedronGeometry(1.35, 1),
       new THREE.MeshLambertMaterial({
         color: chunk.region.meadow > 0.35 ? 0x668a4d : 0x426d49,
       }),
-      deciduousCount,
+      legacyDeciduousPlacements.length,
     );
-    deciduousPlacements.forEach((placement, index) => {
+    legacyDeciduousPlacements.forEach((placement, index) => {
       const scale = new THREE.Vector3(
         placement.scale,
         placement.scale,
@@ -5689,56 +5992,92 @@ export class WorldScene {
       1,
       Math.round(budget * (0.08 + chunk.region.highland * 0.42)),
     );
-    addInstances(
-      rockCount,
-      new THREE.DodecahedronGeometry(0.8, 0),
-      new THREE.MeshLambertMaterial({
-        color: chunk.region.highland > 0.3 ? 0x70777a : 0x7b796b,
-      }),
-      0x76ad,
-      (random) => {
-        const ground = groundPlacement(random, 9, 90);
-        const scale = 0.45 + random() * 1.4;
-        return {
-          position: new THREE.Vector3(
-            ground.road.x + Math.cos(ground.road.heading) * ground.offset,
-            ground.baseY + scale * 0.42,
-            ground.road.z + Math.sin(ground.road.heading) * ground.offset,
-          ),
-          scale: new THREE.Vector3(
-            scale,
-            scale * (0.65 + random() * 0.35),
-            scale,
-          ),
-          rotationY: random() * Math.PI,
-        };
-      },
-    );
+    if (this.assetLibrary.isReady) {
+      const rockRandom = seededRandom(chunk.scenerySeed ^ 0x76ad);
+      for (let index = 0; index < rockCount; index += 1) {
+        const ground = groundPlacement(rockRandom, 9, 90);
+        const scale = 0.45 + rockRandom() * 1.4;
+        const rocks = this.assetLibrary.instantiate("rock_cluster");
+        if (!rocks) continue;
+        rocks.position.set(
+          ground.road.x + Math.cos(ground.road.heading) * ground.offset,
+          ground.baseY,
+          ground.road.z + Math.sin(ground.road.heading) * ground.offset,
+        );
+        rocks.rotation.y = rockRandom() * Math.PI;
+        rocks.scale.setScalar(scale * 0.72);
+        group.add(rocks);
+      }
+    } else {
+      addInstances(
+        rockCount,
+        new THREE.DodecahedronGeometry(0.8, 0),
+        new THREE.MeshLambertMaterial({
+          color: chunk.region.highland > 0.3 ? 0x70777a : 0x7b796b,
+        }),
+        0x76ad,
+        (random) => {
+          const ground = groundPlacement(random, 9, 90);
+          const scale = 0.45 + random() * 1.4;
+          return {
+            position: new THREE.Vector3(
+              ground.road.x + Math.cos(ground.road.heading) * ground.offset,
+              ground.baseY + scale * 0.42,
+              ground.road.z + Math.sin(ground.road.heading) * ground.offset,
+            ),
+            scale: new THREE.Vector3(
+              scale,
+              scale * (0.65 + random() * 0.35),
+              scale,
+            ),
+            rotationY: random() * Math.PI,
+          };
+        },
+      );
+    }
 
     if (detail === "near" && chunk.region.meadow > 0.22) {
       const flowerCount = Math.max(
         4,
         Math.round(budget * chunk.region.meadow * 0.8),
       );
-      addInstances(
-        flowerCount,
-        new THREE.OctahedronGeometry(0.09, 0),
-        new THREE.MeshBasicMaterial({
-          color: chunk.index % 2 ? 0xf0c75e : 0xd98b85,
-        }),
-        0x118f,
-        (random) => {
-          const ground = groundPlacement(random, 6, 28);
-          return {
-            position: new THREE.Vector3(
-              ground.road.x + Math.cos(ground.road.heading) * ground.offset,
-              ground.baseY + 0.18,
-              ground.road.z + Math.sin(ground.road.heading) * ground.offset,
-            ),
-            scale: new THREE.Vector3(1, 1.6, 1),
-          };
-        },
-      );
+      if (this.assetLibrary.isReady) {
+        const flowerRandom = seededRandom(chunk.scenerySeed ^ 0x118f);
+        const patchCount = Math.max(2, Math.ceil(flowerCount / 4));
+        for (let index = 0; index < patchCount; index += 1) {
+          const ground = groundPlacement(flowerRandom, 6, 28);
+          const flowers = this.assetLibrary.instantiate("flower_patch");
+          if (!flowers) continue;
+          flowers.position.set(
+            ground.road.x + Math.cos(ground.road.heading) * ground.offset,
+            ground.baseY,
+            ground.road.z + Math.sin(ground.road.heading) * ground.offset,
+          );
+          flowers.rotation.y = flowerRandom() * Math.PI * 2;
+          flowers.scale.setScalar(0.65 + flowerRandom() * 0.45);
+          group.add(flowers);
+        }
+      } else {
+        addInstances(
+          flowerCount,
+          new THREE.OctahedronGeometry(0.09, 0),
+          new THREE.MeshBasicMaterial({
+            color: chunk.index % 2 ? 0xf0c75e : 0xd98b85,
+          }),
+          0x118f,
+          (random) => {
+            const ground = groundPlacement(random, 6, 28);
+            return {
+              position: new THREE.Vector3(
+                ground.road.x + Math.cos(ground.road.heading) * ground.offset,
+                ground.baseY + 0.18,
+                ground.road.z + Math.sin(ground.road.heading) * ground.offset,
+              ),
+              scale: new THREE.Vector3(1, 1.6, 1),
+            };
+          },
+        );
+      }
     }
 
     if (detail === "near" && chunk.region.lakeside > 0.24) {
@@ -5746,23 +6085,66 @@ export class WorldScene {
         4,
         Math.round(budget * chunk.region.lakeside * 0.5),
       );
-      addInstances(
-        reedCount,
-        new THREE.CylinderGeometry(0.025, 0.04, 1.1, 5),
-        new THREE.MeshLambertMaterial({ color: 0x718345 }),
-        0x4d31,
-        (random) => {
-          const ground = groundPlacement(random, 36, 72);
-          return {
-            position: new THREE.Vector3(
-              ground.road.x + Math.cos(ground.road.heading) * ground.offset,
-              ground.baseY + 0.55,
-              ground.road.z + Math.sin(ground.road.heading) * ground.offset,
-            ),
-            scale: new THREE.Vector3(1, 0.7 + random() * 0.8, 1),
-          };
-        },
-      );
+      if (this.assetLibrary.isReady) {
+        const reedRandom = seededRandom(chunk.scenerySeed ^ 0x4d31);
+        const clumpCount = Math.max(2, Math.ceil(reedCount / 3));
+        for (let index = 0; index < clumpCount; index += 1) {
+          const ground = groundPlacement(reedRandom, 36, 72);
+          const reeds = this.assetLibrary.instantiate("reed_clump");
+          if (!reeds) continue;
+          reeds.position.set(
+            ground.road.x + Math.cos(ground.road.heading) * ground.offset,
+            ground.baseY,
+            ground.road.z + Math.sin(ground.road.heading) * ground.offset,
+          );
+          reeds.rotation.y = reedRandom() * Math.PI * 2;
+          reeds.scale.setScalar(0.7 + reedRandom() * 0.55);
+          group.add(reeds);
+        }
+      } else {
+        addInstances(
+          reedCount,
+          new THREE.CylinderGeometry(0.025, 0.04, 1.1, 5),
+          new THREE.MeshLambertMaterial({ color: 0x718345 }),
+          0x4d31,
+          (random) => {
+            const ground = groundPlacement(random, 36, 72);
+            return {
+              position: new THREE.Vector3(
+                ground.road.x + Math.cos(ground.road.heading) * ground.offset,
+                ground.baseY + 0.55,
+                ground.road.z + Math.sin(ground.road.heading) * ground.offset,
+              ),
+              scale: new THREE.Vector3(1, 0.7 + random() * 0.8, 1),
+            };
+          },
+        );
+      }
+    }
+
+    if (detail === "near" && this.assetLibrary.isReady) {
+      const ruralPropKeys = [
+        "berry_bush",
+        "fallen_log",
+        "tree_stump",
+        "picnic_table",
+        "trail_sign",
+      ] as const;
+      const ruralRandom = seededRandom(chunk.scenerySeed ^ 0xc411);
+      ruralPropKeys.forEach((key, index) => {
+        if ((Math.abs(chunk.index) + index) % 3 !== 0) return;
+        const ground = groundPlacement(ruralRandom, 9, 90);
+        const prop = this.assetLibrary.instantiate(key);
+        if (!prop) return;
+        prop.position.set(
+          ground.road.x + Math.cos(ground.road.heading) * ground.offset,
+          ground.baseY,
+          ground.road.z + Math.sin(ground.road.heading) * ground.offset,
+        );
+        prop.rotation.y = ruralRandom() * Math.PI * 2;
+        prop.scale.setScalar(0.75 + ruralRandom() * 0.4);
+        group.add(prop);
+      });
     }
 
     const forkNearChunk = nearbyForks.some(
@@ -5788,6 +6170,31 @@ export class WorldScene {
       0
         ? 1
         : -1;
+    if (this.assetLibrary.isReady) {
+      const segmentCount = Math.ceil(CHUNK_LENGTH_M / 5);
+      for (let index = 0; index < segmentCount; index += 1) {
+        const distance =
+          chunk.startDistanceM +
+          ((index + 0.5) / segmentCount) * CHUNK_LENGTH_M;
+        const road = this.generator.sample(distance);
+        const fenceKeys = [
+          "fence_split_rail",
+          "fence_picket",
+          "fence_stone",
+        ] as const;
+        const segment = this.assetLibrary.instantiate(
+          index === Math.floor(segmentCount / 2)
+            ? "farm_gate"
+            : fenceKeys[Math.abs(chunk.index) % fenceKeys.length]!,
+        );
+        if (!segment) continue;
+        segment.position.copy(this.roadOffsetPosition(road, side * 8.5, 0));
+        segment.rotation.y = -road.heading + Math.PI / 2;
+        segment.scale.x = CHUNK_LENGTH_M / segmentCount / 5;
+        fence.add(segment);
+      }
+      return fence;
+    }
     const material = new THREE.MeshLambertMaterial({ color: 0x8a6b48 });
     const posts = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.14, 1.15, 0.14),

@@ -19,7 +19,7 @@ import {
   X,
   createIcons,
 } from "lucide";
-import { AmbientAudio } from "./audio/ambient-audio";
+import { RideAudio } from "./audio/ambient-audio";
 import {
   bestAveragePower,
   rideSamplesToCsv,
@@ -139,8 +139,8 @@ export class InfinibikeApp {
   private environment: EnvironmentSettings = { ...DEFAULT_ENVIRONMENT };
   private rideMode: RideModeSettings = { ...DEFAULT_RIDE_MODE };
   private ridePhysics: RidePhysicsSettings = { ...DEFAULT_RIDE_PHYSICS };
-  private readonly ambientAudio = new AmbientAudio();
-  private audioEnabled = true;
+  private readonly rideAudio = new RideAudio();
+  private audioEnabled = false;
   private cameraSettings: CameraSettings = {
     mode: "close",
     smoothing: "balanced",
@@ -308,7 +308,7 @@ export class InfinibikeApp {
             <label><span>FTP</span><div class="unit-input"><input id="ftp" type="number" min="60" max="700" value="${this.ridePhysics.ftpW}"><span>W</span></div></label>
             <label><span>Camera</span><select id="camera-mode">${option("close", "Close chase", this.cameraSettings.mode)}${option("wide", "Wide chase", this.cameraSettings.mode)}${option("handlebar", "Handlebar", this.cameraSettings.mode)}</select></label>
             <label><span>Camera smoothing</span><select id="camera-smoothing">${option("responsive", "Responsive", this.cameraSettings.smoothing)}${option("balanced", "Balanced", this.cameraSettings.smoothing)}${option("cinematic", "Cinematic", this.cameraSettings.smoothing)}</select></label>
-            <label class="toggle-field"><span>Ambient audio</span><input id="ambient-audio" type="checkbox" ${this.audioEnabled ? "checked" : ""}></label>
+            <label class="toggle-field"><span>Music &amp; terrain sounds</span><input id="ambient-audio" type="checkbox" ${this.audioEnabled ? "checked" : ""}></label>
             <label class="toggle-field"><span>Reduced motion</span><input id="reduced-motion" type="checkbox" ${this.cameraSettings.reducedMotion ? "checked" : ""}></label>
             <label><span>Terrain</span><select id="terrain">${option("gentle", "Gentle", this.environment.terrain)}${option("rolling", "Rolling", this.environment.terrain)}${option("rugged", "Rugged", this.environment.terrain)}</select></label>
             <label><span>Scenery</span><select id="density">${option("sparse", "Sparse", this.environment.density)}${option("balanced", "Balanced", this.environment.density)}${option("lush", "Lush", this.environment.density)}</select></label>
@@ -479,7 +479,7 @@ export class InfinibikeApp {
     }
     const audio = this.root.querySelector<HTMLInputElement>("#ambient-audio");
     if (audio) this.audioEnabled = audio.checked;
-    this.ambientAudio.setEnabled(this.audioEnabled);
+    this.rideAudio.setEnabled(this.audioEnabled);
   }
 
   private showManualCalibration(): void {
@@ -601,9 +601,9 @@ export class InfinibikeApp {
     if (!this.profile) return;
     this.world.configure(this.environment);
     this.world.setCameraSettings(this.cameraSettings);
-    this.ambientAudio.setEnabled(this.audioEnabled);
-    if (!new URLSearchParams(location.search).has("e2e"))
-      void this.ambientAudio.start();
+    this.rideAudio.setEnabled(this.audioEnabled);
+    if (this.audioEnabled && !new URLSearchParams(location.search).has("e2e"))
+      void this.rideAudio.start();
     this.model = new RideModel(this.profile, this.ridePhysics);
     this.model.applyTelemetry(this.latestTelemetry);
     this.snapshot = this.model.getSnapshot();
@@ -649,7 +649,7 @@ export class InfinibikeApp {
         <div class="ride-controls">
           <button id="pause" class="icon-button ride-menu" title="Pause ride"><i data-lucide="pause"></i></button>
           <button id="camera" class="icon-button ride-menu" title="Change camera"><i data-lucide="camera"></i></button>
-          <button id="audio" class="icon-button ride-menu" title="${this.audioEnabled ? "Mute ambient audio" : "Enable ambient audio"}"><i data-lucide="${this.audioEnabled ? "volume-2" : "volume-x"}"></i></button>
+          <button id="audio" class="icon-button ride-menu" title="${this.audioEnabled ? "Mute music and terrain sounds" : "Enable music and terrain sounds"}"><i data-lucide="${this.audioEnabled ? "volume-2" : "volume-x"}"></i></button>
         </div>
         ${this.demoSource ? `<label class="demo-power-control"><span>Demo power <output id="demo-power-value">${this.demoPowerW} W</output></span><input id="demo-power" type="range" min="0" max="500" step="5" value="${this.demoPowerW}" aria-label="Demo power" title="Set a steady hands-free demo effort"></label>` : ""}
         <div class="climbing-indicator"><span>Total climbing</span><strong id="hud-climbing">0 m</strong></div>
@@ -689,7 +689,7 @@ export class InfinibikeApp {
     if (!this.gameActive) return;
     this.paused = true;
     this.world.setRealtime(false);
-    this.ambientAudio.setPaused(true);
+    this.rideAudio.setPaused(true);
     void this.restoreBaselineLoad();
     this.view = "pause";
     this.root.innerHTML = `
@@ -705,7 +705,7 @@ export class InfinibikeApp {
           <div class="configuration-grid two pause-settings">
             <label><span>Camera</span><select id="pause-camera">${option("close", "Close chase", this.cameraSettings.mode)}${option("wide", "Wide chase", this.cameraSettings.mode)}${option("handlebar", "Handlebar", this.cameraSettings.mode)}</select></label>
             <label><span>Smoothing</span><select id="pause-smoothing">${option("responsive", "Responsive", this.cameraSettings.smoothing)}${option("balanced", "Balanced", this.cameraSettings.smoothing)}${option("cinematic", "Cinematic", this.cameraSettings.smoothing)}</select></label>
-            <label class="toggle-field"><span>Ambient audio</span><input id="pause-audio" type="checkbox" ${this.audioEnabled ? "checked" : ""}></label>
+            <label class="toggle-field"><span>Music &amp; terrain sounds</span><input id="pause-audio" type="checkbox" ${this.audioEnabled ? "checked" : ""}></label>
             <label class="toggle-field"><span>Reduced motion</span><input id="pause-reduced-motion" type="checkbox" ${this.cameraSettings.reducedMotion ? "checked" : ""}></label>
           </div>
         </section>
@@ -738,7 +738,8 @@ export class InfinibikeApp {
       this.audioEnabled =
         this.root.querySelector<HTMLInputElement>("#pause-audio")!.checked;
       this.world.setCameraSettings(this.cameraSettings);
-      this.ambientAudio.setEnabled(this.audioEnabled);
+      this.rideAudio.setEnabled(this.audioEnabled);
+      if (this.audioEnabled) void this.rideAudio.prepare();
     };
     this.root
       .querySelectorAll(
@@ -763,7 +764,7 @@ export class InfinibikeApp {
     this.showRideHud();
     this.paused = false;
     this.world.setRealtime(true);
-    this.ambientAudio.setPaused(false);
+    this.rideAudio.setPaused(false);
   }
 
   private async endRide(goalCompleted = false): Promise<void> {
@@ -772,7 +773,7 @@ export class InfinibikeApp {
     this.gameActive = false;
     this.paused = false;
     this.world.setRealtime(false);
-    this.ambientAudio.setPaused(true);
+    this.rideAudio.setPaused(true);
     await this.restoreBaselineLoad();
     if (!this.snapshot || !this.rideStartedAt) return this.showSetup();
     this.lastSummary = createRideSummary(
@@ -889,13 +890,14 @@ export class InfinibikeApp {
       this.lastHudUpdate = performance.now();
       const ambient = this.world.getAmbientFeatures(this.snapshot.distanceM);
       const urban = this.environment.landscape === "city";
-      this.ambientAudio.update({
+      this.rideAudio.update({
         speedKph: this.snapshot.speedKph,
         cadenceRpm: this.snapshot.cadenceRpm,
         region: urban
           ? { meadow: 1, woodland: 0, lakeside: 0, highland: 0 }
           : updatedRoad.region,
         raining: this.environment.weather === "rain",
+        urban,
         villageProximity: urban
           ? Math.max(0.65, ambient.villageProximity)
           : ambient.villageProximity,
@@ -1145,7 +1147,7 @@ export class InfinibikeApp {
   }
 
   private async returnHome(): Promise<void> {
-    this.ambientAudio.setPaused(true);
+    this.rideAudio.setPaused(true);
     await this.restoreBaselineLoad();
     this.sourceUnsubscribers.forEach((unsubscribe) => unsubscribe());
     this.sourceUnsubscribers = [];
@@ -1238,13 +1240,13 @@ export class InfinibikeApp {
 
   private toggleAudio(): void {
     this.audioEnabled = !this.audioEnabled;
-    this.ambientAudio.setEnabled(this.audioEnabled);
-    if (this.audioEnabled) void this.ambientAudio.start();
+    this.rideAudio.setEnabled(this.audioEnabled);
+    if (this.audioEnabled) void this.rideAudio.start();
     const button = this.root.querySelector<HTMLButtonElement>("#audio");
     if (!button) return;
     button.title = this.audioEnabled
-      ? "Mute ambient audio"
-      : "Enable ambient audio";
+      ? "Mute music and terrain sounds"
+      : "Enable music and terrain sounds";
     button.innerHTML = `<i data-lucide="${this.audioEnabled ? "volume-2" : "volume-x"}"></i>`;
     this.icons();
   }

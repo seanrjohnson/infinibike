@@ -12,6 +12,7 @@ test("completes a demo ride and stores its summary", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Shape your ride" }),
   ).toBeVisible();
+  await expect(page.locator("#ambient-audio")).not.toBeChecked();
   await page.locator("#seed").fill("e2e-road");
   await page.locator("#landscape").selectOption("city");
   await page.getByRole("button", { name: "Start ride" }).click();
@@ -60,10 +61,12 @@ test("completes a demo ride and stores its summary", async ({ page }) => {
         (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.cameraMode,
     )
     .toBe("wide");
-  const audioButton = page.getByRole("button", { name: "Mute ambient audio" });
+  const audioButton = page.getByRole("button", {
+    name: "Enable music and terrain sounds",
+  });
   await audioButton.click();
   await expect(
-    page.getByRole("button", { name: "Enable ambient audio" }),
+    page.getByRole("button", { name: "Mute music and terrain sounds" }),
   ).toBeVisible();
   const gradePreview = page.locator("#grade-preview");
   expect(await gradePreview.getAttribute("width")).not.toBe("0");
