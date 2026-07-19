@@ -13,9 +13,11 @@ import type { RideSnapshot } from "../domain/ride-model";
 import {
   CHUNK_LENGTH_M,
   ROAD_HALF_WIDTH_M,
+  cityIntersectionBranches,
   cityIntersectionsForChunk,
   terrainElevationAt as sampleTerrainElevation,
   WorldGenerator,
+  type CityTurnDescriptor,
   type RegionWeights,
   type RoadSample,
   type WorldChunkDescriptor,
@@ -155,6 +157,7 @@ export class WorldScene {
   private quality: QualityLevel = "high";
   private originDistanceM = 0;
   private originX = 0;
+  private originZ = 0;
   private originElevation = 0;
   private rideDistanceM = 0;
   private elapsed = 0;
@@ -259,6 +262,7 @@ export class WorldScene {
         setDistance: (distanceM) => this.setVisualQaDistance(distanceM),
         setGraphics: (preference) => this.setGraphicsPreference(preference),
         findRegionDistance: (region) => this.findRegionDistance(region),
+        findCityTurnDistance: (afterM = 0) => this.findCityTurnDistance(afterM),
       };
     }
     window.addEventListener("resize", this.scheduleResize);
@@ -282,6 +286,7 @@ export class WorldScene {
     this.generator = new WorldGenerator(this.settings);
     this.originDistanceM = 0;
     this.originX = 0;
+    this.originZ = 0;
     this.originElevation = 0;
     this.rideDistanceM = 0;
     this.clearChunks();
@@ -354,6 +359,7 @@ export class WorldScene {
 
   getDiagnostics(): Record<string, number | string> {
     this.renderer.getDrawingBufferSize(this.drawingBufferSize);
+    const currentRoad = this.generator.sample(this.rideDistanceM);
     const nearChunks = [...this.chunks.values()].filter(
       ({ detail }) => detail === "near",
     ).length;
@@ -379,6 +385,9 @@ export class WorldScene {
         Math.max(1, this.canvas.clientWidth || window.innerWidth),
       contextLosses: this.contextLosses,
       distanceM: this.rideDistanceM,
+      routeHeading: currentRoad.heading,
+      routeX: currentRoad.x,
+      routeZ: currentRoad.z,
       cameraMode: this.cameraSettings.mode,
       cadenceRpm: this.cadenceRpm,
       landscape: this.settings.landscape,
@@ -772,7 +781,7 @@ export class WorldScene {
       this.clouds.position.set(
         road.x - this.originX + Math.sin(this.elapsed * 0.02) * 18,
         road.elevationM - this.originElevation,
-        -(this.rideDistanceM - this.originDistanceM) - 120,
+        road.z - this.originZ - 120,
       );
     }
     if (!this.rain) return;
@@ -788,7 +797,7 @@ export class WorldScene {
     this.rain.position.set(
       road.x - this.originX,
       road.elevationM - this.originElevation,
-      -(this.rideDistanceM - this.originDistanceM),
+      road.z - this.originZ,
     );
   }
 
@@ -867,10 +876,10 @@ export class WorldScene {
       positions.push(
         sample.x - nx * ROAD_HALF_WIDTH_M,
         sample.elevationM + 0.06,
-        -sample.distanceM - nz * ROAD_HALF_WIDTH_M,
+        sample.z - nz * ROAD_HALF_WIDTH_M,
         sample.x + nx * ROAD_HALF_WIDTH_M,
         sample.elevationM + 0.06,
-        -sample.distanceM + nz * ROAD_HALF_WIDTH_M,
+        sample.z + nz * ROAD_HALF_WIDTH_M,
       );
     });
     for (let row = 0; row < chunk.samples.length - 1; row += 1) {
@@ -912,7 +921,7 @@ export class WorldScene {
           shoulderPositions.push(
             sample.x + Math.cos(sample.heading) * offset,
             edgeBlend,
-            -sample.distanceM + Math.sin(sample.heading) * offset,
+            sample.z + Math.sin(sample.heading) * offset,
           );
         }
       });
@@ -975,7 +984,7 @@ export class WorldScene {
         euler.set(Math.atan(sample.gradePercent / 100), -sample.heading, 0),
       );
       matrix.compose(
-        new THREE.Vector3(sample.x, sample.elevationM + 0.095, -distance),
+        new THREE.Vector3(sample.x, sample.elevationM + 0.095, sample.z),
         rotation,
         new THREE.Vector3(1, 1, 1),
       );
@@ -1001,7 +1010,7 @@ export class WorldScene {
           positions.push(
             sample.x + Math.cos(sample.heading) * offset,
             sample.elevationM + 0.097,
-            -sample.distanceM + Math.sin(sample.heading) * offset,
+            sample.z + Math.sin(sample.heading) * offset,
           );
         }
       });
@@ -1052,7 +1061,7 @@ export class WorldScene {
     return new THREE.Vector3(
       sample.x + Math.cos(sample.heading) * offset,
       this.terrainElevationAt(sample, offset) + height,
-      -sample.distanceM + Math.sin(sample.heading) * offset,
+      sample.z + Math.sin(sample.heading) * offset,
     );
   }
 
@@ -1098,7 +1107,7 @@ export class WorldScene {
         positions.push(
           sample.x + Math.cos(sample.heading) * offset,
           elevation,
-          -sample.distanceM + Math.sin(sample.heading) * offset,
+          sample.z + Math.sin(sample.heading) * offset,
         );
         const color = baseColor
           .clone()
@@ -1129,7 +1138,10 @@ export class WorldScene {
     geometry.computeVertexNormals();
     const terrain = new THREE.Mesh(
       geometry,
-      new THREE.MeshLambertMaterial({ vertexColors: true }),
+      new THREE.MeshLambertMaterial({
+        vertexColors: true,
+        side: THREE.DoubleSide,
+      }),
     );
     terrain.name = "terrain-surface";
     terrain.userData.receiveOnly = true;
@@ -1153,7 +1165,7 @@ export class WorldScene {
         positions.push(
           sample.x + Math.cos(sample.heading) * offset,
           sample.elevationM - 1.1,
-          -sample.distanceM + Math.sin(sample.heading) * offset,
+          sample.z + Math.sin(sample.heading) * offset,
         );
       }
     });
@@ -1192,7 +1204,7 @@ export class WorldScene {
         shorePositions.push(
           sample.x + Math.cos(sample.heading) * offset,
           this.terrainElevationAt(sample, offset) + 0.035,
-          -sample.distanceM + Math.sin(sample.heading) * offset,
+          sample.z + Math.sin(sample.heading) * offset,
         );
       }
     });
@@ -1236,7 +1248,7 @@ export class WorldScene {
         new THREE.Vector3(
           road.x + Math.cos(road.heading) * offset,
           road.elevationM - 1.045,
-          -distance + Math.sin(road.heading) * offset,
+          road.z + Math.sin(road.heading) * offset,
         ),
         rotation,
         new THREE.Vector3(0.65 + rippleRandom() * 0.9, 1, 1),
@@ -1298,11 +1310,10 @@ export class WorldScene {
       );
       const baseY = this.terrainElevationAt(road, offset) - 2;
       matrix.compose(
-        new THREE.Vector3(
-          road.x,
-          baseY + height / 2,
-          -distance,
-        ).addScaledVector(across, offset),
+        new THREE.Vector3(road.x, baseY + height / 2, road.z).addScaledVector(
+          across,
+          offset,
+        ),
         new THREE.Quaternion().setFromAxisAngle(
           new THREE.Vector3(0, 1, 0),
           random() * Math.PI,
@@ -1314,7 +1325,7 @@ export class WorldScene {
         new THREE.Vector3(
           road.x,
           baseY + height * 0.24,
-          -distance + (random() - 0.5) * 38,
+          road.z + (random() - 0.5) * 38,
         ).addScaledVector(across, offset * 0.68),
         new THREE.Quaternion().setFromAxisAngle(
           new THREE.Vector3(0, 1, 0),
@@ -1332,7 +1343,7 @@ export class WorldScene {
           new THREE.Vector3(
             road.x,
             baseY + height * 0.82,
-            -distance,
+            road.z,
           ).addScaledVector(across, offset),
           new THREE.Quaternion().setFromAxisAngle(
             new THREE.Vector3(0, 1, 0),
@@ -1380,17 +1391,13 @@ export class WorldScene {
     const fieldCount =
       detail === "near" ? fieldBase : Math.max(1, Math.ceil(fieldBase * 0.58));
     type FieldPlacement = {
-      center: THREE.Vector3;
-      heading: number;
+      distance: number;
+      offset: number;
       width: number;
       depth: number;
+      color: THREE.Color;
     };
     const fieldPlacements: FieldPlacement[] = [];
-    const fields = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshLambertMaterial({ color: 0xffffff }),
-      fieldCount,
-    );
     const fieldPalettes = {
       meadow: [0x86a65f, 0xa4b96b, 0x789458, 0xaaa263],
       woodland: [0x58764d, 0x668454, 0x496b4b, 0x718257],
@@ -1401,35 +1408,71 @@ export class WorldScene {
     for (let index = 0; index < fieldCount; index += 1) {
       const distance =
         chunk.startDistanceM + ((index + 0.35) / fieldCount) * CHUNK_LENGTH_M;
-      const road = this.generator.sample(distance);
       const side = index % 2 ? 1 : -1;
       const offset = side * (58 + random() * 88);
       const width = 34 + random() * 42;
       const depth = 48 + random() * 74;
-      const groundY = this.terrainElevationAt(road, offset) + 0.01;
-      rotation.setFromEuler(
-        euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
-      );
-      const center = new THREE.Vector3(
-        road.x + Math.cos(road.heading) * offset,
-        groundY,
-        -distance + Math.sin(road.heading) * offset,
-      );
-      matrix.compose(center, rotation, new THREE.Vector3(width, 0.07, depth));
-      fields.setMatrixAt(index, matrix);
-      fields.setColorAt(
-        index,
-        new THREE.Color(
+      fieldPlacements.push({
+        distance,
+        offset,
+        width,
+        depth,
+        color: new THREE.Color(
           fieldColors[Math.floor(random() * fieldColors.length)]!,
         ),
-      );
-      fieldPlacements.push({ center, heading: road.heading, width, depth });
+      });
     }
+
+    const fieldTileCount = fieldPlacements.reduce((count, field) => {
+      return count + Math.ceil(field.width / 18) * Math.ceil(field.depth / 18);
+    }, 0);
+    const fields = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshLambertMaterial({ color: 0xffffff }),
+      fieldTileCount,
+    );
+    let fieldTileIndex = 0;
+    fieldPlacements.forEach((field) => {
+      const acrossSegments = Math.ceil(field.width / 18);
+      const alongSegments = Math.ceil(field.depth / 18);
+      const tileWidth = field.width / acrossSegments;
+      const tileDepth = field.depth / alongSegments;
+      for (let along = 0; along < alongSegments; along += 1) {
+        const distance = Math.max(
+          0,
+          field.distance + (along + 0.5 - alongSegments / 2) * tileDepth,
+        );
+        const road = this.generator.sample(distance);
+        rotation.setFromEuler(
+          euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
+        );
+        for (let across = 0; across < acrossSegments; across += 1) {
+          const offset =
+            field.offset + (across + 0.5 - acrossSegments / 2) * tileWidth;
+          matrix.compose(
+            this.roadOffsetPosition(road, offset, 0.015),
+            rotation,
+            new THREE.Vector3(tileWidth + 0.25, 0.07, tileDepth + 0.25),
+          );
+          fields.setMatrixAt(fieldTileIndex, matrix);
+          fields.setColorAt(
+            fieldTileIndex,
+            field.color
+              .clone()
+              .offsetHSL(0, 0, ((fieldTileIndex % 3) - 1) * 0.012),
+          );
+          fieldTileIndex += 1;
+        }
+      }
+    });
     fields.instanceMatrix.needsUpdate = true;
     fields.instanceColor!.needsUpdate = true;
     group.add(fields);
 
-    const boundaryCount = fieldPlacements.length * 2;
+    const boundaryCount = fieldPlacements.reduce(
+      (count, field) => count + Math.ceil(field.depth / 12) * 2,
+      0,
+    );
     const boundaryColor =
       chunk.dominantRegion === "highland"
         ? 0x77766a
@@ -1441,27 +1484,37 @@ export class WorldScene {
       new THREE.MeshLambertMaterial({ color: boundaryColor }),
       boundaryCount,
     );
-    fieldPlacements.forEach((field, fieldIndex) => {
-      const across = new THREE.Vector3(
-        Math.cos(field.heading),
-        0,
-        Math.sin(field.heading),
-      );
-      rotation.setFromEuler(euler.set(0, -field.heading, 0));
-      for (const [edgeIndex, edge] of [-1, 1].entries()) {
-        matrix.compose(
-          field.center
-            .clone()
-            .addScaledVector(across, edge * field.width * 0.5)
-            .setY(field.center.y + 0.32),
-          rotation,
-          new THREE.Vector3(
-            chunk.dominantRegion === "highland" ? 0.7 : 1.1,
-            chunk.dominantRegion === "highland" ? 0.65 : 0.8,
-            field.depth,
-          ),
-        );
-        boundaries.setMatrixAt(fieldIndex * 2 + edgeIndex, matrix);
+    let boundaryIndex = 0;
+    fieldPlacements.forEach((field) => {
+      const segmentCount = Math.ceil(field.depth / 12);
+      const segmentLength = field.depth / segmentCount;
+      for (const edge of [-1, 1]) {
+        for (let segment = 0; segment < segmentCount; segment += 1) {
+          const distance = Math.max(
+            0,
+            field.distance + (segment + 0.5 - segmentCount / 2) * segmentLength,
+          );
+          const road = this.generator.sample(distance);
+          const offset = field.offset + edge * field.width * 0.5;
+          rotation.setFromEuler(
+            euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
+          );
+          matrix.compose(
+            this.roadOffsetPosition(
+              road,
+              offset,
+              chunk.dominantRegion === "highland" ? 0.32 : 0.4,
+            ),
+            rotation,
+            new THREE.Vector3(
+              chunk.dominantRegion === "highland" ? 0.7 : 1.1,
+              chunk.dominantRegion === "highland" ? 0.65 : 0.8,
+              segmentLength + 0.35,
+            ),
+          );
+          boundaries.setMatrixAt(boundaryIndex, matrix);
+          boundaryIndex += 1;
+        }
       }
     });
     boundaries.name = "countryside-field-boundaries";
@@ -1512,7 +1565,7 @@ export class WorldScene {
       const position = new THREE.Vector3(
         road.x + Math.cos(road.heading) * offset,
         groundY + 1.2 * scale,
-        -distance + Math.sin(road.heading) * offset,
+        road.z + Math.sin(road.heading) * offset,
       );
       matrix.compose(
         position,
@@ -1582,7 +1635,7 @@ export class WorldScene {
         const position = new THREE.Vector3(
           road.x + Math.cos(road.heading) * offset,
           groundY,
-          -distance + Math.sin(road.heading) * offset,
+          road.z + Math.sin(road.heading) * offset,
         );
         rotation.setFromEuler(euler.set(0, -road.heading, 0));
         matrix.compose(
@@ -1690,7 +1743,7 @@ export class WorldScene {
           euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
         );
         matrix.compose(
-          new THREE.Vector3(road.x, groundY + 0.08, -distance).addScaledVector(
+          new THREE.Vector3(road.x, groundY + 0.08, road.z).addScaledVector(
             across,
             offset,
           ),
@@ -1726,11 +1779,10 @@ export class WorldScene {
             euler.set(0, -road.heading + baleRandom() * 0.25, Math.PI / 2),
           );
           matrix.compose(
-            new THREE.Vector3(
-              road.x,
-              groundY + 0.62,
-              -distance,
-            ).addScaledVector(across, offset),
+            new THREE.Vector3(road.x, groundY + 0.62, road.z).addScaledVector(
+              across,
+              offset,
+            ),
             rotation,
             new THREE.Vector3(1, 1, 1),
           );
@@ -1857,7 +1909,7 @@ export class WorldScene {
       const dockCenter = new THREE.Vector3(
         road.x,
         road.elevationM - 0.93,
-        -distance,
+        road.z,
       ).addScaledVector(across, waterSide * 43);
       const dock = new THREE.Mesh(
         new THREE.BoxGeometry(19, 0.28, 2.8),
@@ -2071,11 +2123,10 @@ export class WorldScene {
       );
       const offset = utilitySide * 12.5;
       const groundY = this.terrainElevationAt(road, offset) - 0.1;
-      const base = new THREE.Vector3(
-        road.x,
-        groundY,
-        -distance,
-      ).addScaledVector(across, offset);
+      const base = new THREE.Vector3(road.x, groundY, road.z).addScaledVector(
+        across,
+        offset,
+      );
       polePositions.push(base);
       matrix.compose(
         base.clone().setY(groundY + 3.7),
@@ -2104,7 +2155,7 @@ export class WorldScene {
       return new THREE.Vector3(
         road.x,
         this.terrainElevationAt(road, offset) - 0.1,
-        -distance,
+        road.z,
       ).addScaledVector(across, offset);
     };
     const wireAnchors = [
@@ -2313,45 +2364,96 @@ export class WorldScene {
           ? 1.28
           : 1;
     const segmentCount = detail === "near" ? 20 : 10;
-    const sidewalkSegmentCount = 40;
     const crossingDistances = cityIntersectionsForChunk(chunk.index);
+    type StreetSide = -1 | 1;
+    type IntersectionLayout = {
+      distance: number;
+      branches: StreetSide[];
+      fourWay: boolean;
+      turn?: CityTurnDescriptor;
+    };
+    const intersectionLayout = (distance: number): IntersectionLayout => {
+      const turn = this.generator.cityTurnAtIntersection(distance);
+      const generatedBranches = cityIntersectionBranches(
+        this.settings.seed,
+        distance,
+      );
+      const fourWay = generatedBranches.length === 2;
+      return {
+        distance,
+        branches: turn ? [-1, 1] : generatedBranches,
+        fourWay,
+        turn,
+      };
+    };
+    const intersectionLayouts = crossingDistances.map(intersectionLayout);
+    const sidewalkIntersectionLayouts = [
+      ...intersectionLayouts,
+      ...cityIntersectionsForChunk(chunk.index + 1)
+        .filter((distance) => distance === chunk.endDistanceM)
+        .map(intersectionLayout),
+    ];
+    type SidewalkPiece = {
+      side: StreetSide;
+      distance: number;
+      length: number;
+    };
+    const sidewalkPieces: SidewalkPiece[] = [];
+    const maxSidewalkPieceLength = 6.25;
+    for (const side of [-1, 1] as const) {
+      let cursor = chunk.startDistanceM;
+      const addRange = (start: number, end: number): void => {
+        const length = end - start;
+        if (length <= 0.08) return;
+        const pieceCount = Math.ceil(length / maxSidewalkPieceLength);
+        const pieceLength = length / pieceCount;
+        for (let index = 0; index < pieceCount; index += 1) {
+          sidewalkPieces.push({
+            side,
+            distance: start + (index + 0.5) * pieceLength,
+            length: pieceLength,
+          });
+        }
+      };
+      for (const layout of sidewalkIntersectionLayouts) {
+        if (!layout.branches.includes(side)) continue;
+        const intersectionHalfWidth = layout.turn ? 13 : 5.1;
+        const gapStart = Math.max(
+          chunk.startDistanceM,
+          layout.distance - intersectionHalfWidth,
+        );
+        const gapEnd = Math.min(
+          chunk.endDistanceM,
+          layout.distance + intersectionHalfWidth,
+        );
+        addRange(cursor, gapStart);
+        cursor = Math.max(cursor, gapEnd);
+      }
+      addRange(cursor, chunk.endDistanceM);
+    }
     const sidewalkMaterial = new THREE.MeshLambertMaterial({ color: 0x9ca29d });
     const sidewalks = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(
-        3.6,
-        0.18,
-        CHUNK_LENGTH_M / sidewalkSegmentCount + 0.2,
-      ),
+      new THREE.BoxGeometry(3.6, 0.18, 1),
       sidewalkMaterial,
-      sidewalkSegmentCount * 2,
+      sidewalkPieces.length,
     );
-    for (let index = 0; index < sidewalkSegmentCount; index += 1) {
-      const distance =
-        chunk.startDistanceM +
-        ((index + 0.5) / sidewalkSegmentCount) * CHUNK_LENGTH_M;
-      const road = this.generator.sample(distance);
-      const crossesIntersection = crossingDistances.some(
-        (crossingDistance) => Math.abs(distance - crossingDistance) <= 4.7,
-      );
+    sidewalkPieces.forEach((piece, index) => {
+      const road = this.generator.sample(piece.distance);
       rotation.setFromEuler(
         euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
       );
-      for (const [sideIndex, side] of [-1, 1].entries()) {
-        const offset = side * 5.15;
-        matrix.compose(
-          new THREE.Vector3(
-            road.x + Math.cos(road.heading) * offset,
-            road.elevationM + 0.04,
-            -distance + Math.sin(road.heading) * offset,
-          ),
-          rotation,
-          crossesIntersection
-            ? new THREE.Vector3(1, 0.01, 0.01)
-            : new THREE.Vector3(1, 1, 1),
-        );
-        sidewalks.setMatrixAt(index * 2 + sideIndex, matrix);
-      }
-    }
+      const offset = piece.side * 5.15;
+      matrix.compose(
+        new THREE.Vector3(
+          road.x + Math.cos(road.heading) * offset,
+          road.elevationM + 0.04,
+          road.z + Math.sin(road.heading) * offset,
+        ),
+        rotation,
+        new THREE.Vector3(1, 1, piece.length + 0.12),
+      );
+      sidewalks.setMatrixAt(index, matrix);
+    });
     sidewalks.name = "city-sidewalks";
     sidewalks.userData.receiveOnly = true;
     sidewalks.instanceMatrix.needsUpdate = true;
@@ -2389,7 +2491,7 @@ export class WorldScene {
         const streetCenter = new THREE.Vector3(
           road.x,
           road.elevationM - 0.2,
-          -distance,
+          road.z,
         ).addScaledVector(across, side * parallelStreetOffset);
         matrix.compose(streetCenter, rotation, new THREE.Vector3(1, 1, 1));
         blockStreets.setMatrixAt(index * 2 + sideIndex, matrix);
@@ -2485,13 +2587,24 @@ export class WorldScene {
     blockAlleys.instanceMatrix.needsUpdate = true;
     group.add(blockPads, blockAlleys);
 
-    const crossStreets = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(220, 0.08, 8.5),
+    const intersectionPads = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 0.08, 1),
       new THREE.MeshStandardMaterial({ color: 0x4b504e, roughness: 0.95 }),
       crossingDistances.length,
     );
+    const branchLength = 108;
+    const crossStreetArms = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(8.5, 0.08, 1),
+      new THREE.MeshStandardMaterial({ color: 0x4b504e, roughness: 0.95 }),
+      intersectionLayouts.reduce(
+        (count, layout) =>
+          count +
+          (layout.turn ? (layout.fourWay ? 2 : 1) : layout.branches.length),
+        0,
+      ),
+    );
     const crosswalk = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(4.9, 0.035, 0.42),
+      new THREE.BoxGeometry(4.9, 0.035, 0.26),
       new THREE.MeshBasicMaterial({ color: 0xe7e5da }),
       crossingDistances.length * 12,
     );
@@ -2511,36 +2624,79 @@ export class WorldScene {
       new THREE.MeshBasicMaterial({ color: 0xe5a43b }),
       signalPoleCount,
     );
-    crossingDistances.forEach((crossingDistance, crossingIndex) => {
+    let branchIndex = 0;
+    intersectionLayouts.forEach((layout, crossingIndex) => {
+      const crossingDistance = layout.distance;
       const crossingRoad = this.generator.sample(crossingDistance);
+      const intersectionHeading =
+        layout.turn?.incomingHeading ?? crossingRoad.heading;
+      const intersectionCenter = new THREE.Vector3(
+        layout.turn?.x ?? crossingRoad.x,
+        crossingRoad.elevationM,
+        layout.turn?.z ?? crossingRoad.z,
+      );
       rotation.setFromEuler(
         euler.set(
           Math.atan(crossingRoad.gradePercent / 100),
-          -crossingRoad.heading,
+          -intersectionHeading,
           0,
         ),
       );
       matrix.compose(
-        new THREE.Vector3(
-          crossingRoad.x,
-          crossingRoad.elevationM - 0.01,
-          -crossingDistance,
-        ),
+        intersectionCenter.clone().setY(crossingRoad.elevationM - 0.01),
         rotation,
-        new THREE.Vector3(1, 1, 1),
+        new THREE.Vector3(layout.turn ? 26 : 17, 1, layout.turn ? 26 : 17),
       );
-      crossStreets.setMatrixAt(crossingIndex, matrix);
+      intersectionPads.setMatrixAt(crossingIndex, matrix);
+
+      const branchHeadings = layout.turn
+        ? [
+            layout.turn.incomingHeading,
+            ...(layout.fourWay ? [layout.turn.outgoingHeading + Math.PI] : []),
+          ]
+        : layout.branches.map(
+            (side) => crossingRoad.heading + side * (Math.PI / 2),
+          );
+      for (const branchHeading of branchHeadings) {
+        const branchForward = new THREE.Vector3(
+          Math.sin(branchHeading),
+          0,
+          -Math.cos(branchHeading),
+        );
+        rotation.setFromEuler(
+          euler.set(
+            Math.atan(crossingRoad.gradePercent / 100),
+            -branchHeading,
+            0,
+          ),
+        );
+        matrix.compose(
+          intersectionCenter
+            .clone()
+            .setY(crossingRoad.elevationM - 0.01)
+            .addScaledVector(
+              branchForward,
+              ROAD_HALF_WIDTH_M + branchLength / 2,
+            ),
+          rotation,
+          new THREE.Vector3(1, 1, branchLength),
+        );
+        crossStreetArms.setMatrixAt(branchIndex, matrix);
+        branchIndex += 1;
+      }
 
       for (let index = 0; index < 12; index += 1) {
         const approach = index < 6 ? -1 : 1;
         const stripe = index % 6;
-        const distance = crossingDistance + approach * (4.65 + stripe * 0.48);
+        const crossingInset = layout.turn ? 10.5 : 4.65;
+        const distance =
+          crossingDistance + approach * (crossingInset + stripe * 0.56);
         const road = this.generator.sample(distance);
         rotation.setFromEuler(
           euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
         );
         matrix.compose(
-          new THREE.Vector3(road.x, road.elevationM + 0.105, -distance),
+          new THREE.Vector3(road.x, road.elevationM + 0.105, road.z),
           rotation,
           new THREE.Vector3(1, 1, 1),
         );
@@ -2548,20 +2704,16 @@ export class WorldScene {
       }
 
       const across = new THREE.Vector3(
-        Math.cos(crossingRoad.heading),
+        Math.cos(intersectionHeading),
         0,
-        Math.sin(crossingRoad.heading),
+        Math.sin(intersectionHeading),
       );
       const forward = new THREE.Vector3(
-        Math.sin(crossingRoad.heading),
+        Math.sin(intersectionHeading),
         0,
-        -Math.cos(crossingRoad.heading),
+        -Math.cos(intersectionHeading),
       );
-      const center = new THREE.Vector3(
-        crossingRoad.x,
-        crossingRoad.elevationM,
-        -crossingDistance,
-      );
+      const center = intersectionCenter;
       let cornerIndex = 0;
       for (const side of [-1, 1]) {
         for (const approach of [-1, 1]) {
@@ -2579,7 +2731,7 @@ export class WorldScene {
           rotation.setFromEuler(
             euler.set(
               0,
-              -crossingRoad.heading + (approach > 0 ? 0 : Math.PI),
+              -intersectionHeading + (approach > 0 ? 0 : Math.PI),
               0,
             ),
           );
@@ -2599,16 +2751,26 @@ export class WorldScene {
         }
       }
     });
-    crossStreets.name = "city-cross-streets";
-    crossStreets.userData.receiveOnly = true;
+    intersectionPads.name = "city-intersection-pads";
+    crossStreetArms.name = "city-cross-street-arms";
+    intersectionPads.userData.receiveOnly = true;
+    crossStreetArms.userData.receiveOnly = true;
     crosswalk.userData.disableShadows = true;
     signalLights.userData.disableShadows = true;
-    crossStreets.instanceMatrix.needsUpdate = true;
+    intersectionPads.instanceMatrix.needsUpdate = true;
+    crossStreetArms.instanceMatrix.needsUpdate = true;
     crosswalk.instanceMatrix.needsUpdate = true;
     signalPoles.instanceMatrix.needsUpdate = true;
     signalHeads.instanceMatrix.needsUpdate = true;
     signalLights.instanceMatrix.needsUpdate = true;
-    group.add(crossStreets, crosswalk, signalPoles, signalHeads, signalLights);
+    group.add(
+      intersectionPads,
+      crossStreetArms,
+      crosswalk,
+      signalPoles,
+      signalHeads,
+      signalLights,
+    );
 
     type BuildingPlacement = {
       road: RoadSample;
@@ -2688,7 +2850,7 @@ export class WorldScene {
           center: new THREE.Vector3(
             road.x + Math.cos(road.heading) * offset,
             baseY + height / 2,
-            -distance + Math.sin(road.heading) * offset,
+            road.z + Math.sin(road.heading) * offset,
           ),
           depth,
           frontage,
@@ -2749,7 +2911,7 @@ export class WorldScene {
           center: new THREE.Vector3(
             road.x + Math.cos(road.heading) * offset,
             baseY + height / 2,
-            -distance + Math.sin(road.heading) * offset,
+            road.z + Math.sin(road.heading) * offset,
           ),
           depth,
           frontage,
@@ -3158,7 +3320,7 @@ export class WorldScene {
           center: new THREE.Vector3(
             road.x,
             road.elevationM + (outerStreet ? -0.155 : 0.07),
-            -distance,
+            road.z,
           ).addScaledVector(across, offset),
           color: new THREE.Color(
             vehicleColors[Math.floor(vehicleRandom() * vehicleColors.length)]!,
@@ -3288,7 +3450,7 @@ export class WorldScene {
           new THREE.Vector3(
             road.x + Math.cos(road.heading) * offset,
             road.elevationM + 0.43,
-            -distance + Math.sin(road.heading) * offset,
+            road.z + Math.sin(road.heading) * offset,
           ),
           rotation.identity(),
           new THREE.Vector3(1, 1, 1),
@@ -3324,7 +3486,7 @@ export class WorldScene {
         const center = new THREE.Vector3(
           road.x,
           road.elevationM + 0.48,
-          -distance,
+          road.z,
         ).addScaledVector(across, side * 8.05);
         rotation.setFromEuler(euler.set(0, -road.heading, 0));
         matrix.compose(center, rotation, new THREE.Vector3(0.62, 0.18, 2.1));
@@ -3419,7 +3581,7 @@ export class WorldScene {
       const position = new THREE.Vector3(
         road.x + Math.cos(road.heading) * offset,
         road.elevationM + 2.1,
-        -distance + Math.sin(road.heading) * offset,
+        road.z + Math.sin(road.heading) * offset,
       );
       matrix.compose(position, rotation.identity(), new THREE.Vector3(1, 1, 1));
       poles.setMatrixAt(index, matrix);
@@ -3450,7 +3612,7 @@ export class WorldScene {
           lawn.position.set(
             road.x + Math.cos(road.heading) * side * 22,
             road.elevationM - 0.08,
-            -distance + Math.sin(road.heading) * side * 22,
+            road.z + Math.sin(road.heading) * side * 22,
           );
           lawn.rotation.y = -road.heading;
           group.add(lawn);
@@ -3481,7 +3643,7 @@ export class WorldScene {
         const position = new THREE.Vector3(
           road.x + Math.cos(road.heading) * offset,
           road.elevationM + 0.75,
-          -distance + Math.sin(road.heading) * offset,
+          road.z + Math.sin(road.heading) * offset,
         );
         matrix.compose(
           position,
@@ -3609,7 +3771,7 @@ export class WorldScene {
           placement.road.x +
             Math.cos(placement.road.heading) * placement.offset,
           placement.baseY + 1.05 * placement.scale,
-          -placement.distance +
+          placement.road.z +
             Math.sin(placement.road.heading) * placement.offset,
         ),
         quaternion.identity(),
@@ -3621,7 +3783,7 @@ export class WorldScene {
           placement.road.x +
             Math.cos(placement.road.heading) * placement.offset,
           placement.baseY + 3.1 * placement.scale,
-          -placement.distance +
+          placement.road.z +
             Math.sin(placement.road.heading) * placement.offset,
         ),
         quaternion.identity(),
@@ -3667,7 +3829,7 @@ export class WorldScene {
           placement.road.x +
             Math.cos(placement.road.heading) * placement.offset,
           placement.baseY + 1.2 * placement.scale,
-          -placement.distance +
+          placement.road.z +
             Math.sin(placement.road.heading) * placement.offset,
         ),
         quaternion.identity(),
@@ -3679,7 +3841,7 @@ export class WorldScene {
           placement.road.x +
             Math.cos(placement.road.heading) * placement.offset,
           placement.baseY + 3.15 * placement.scale,
-          -placement.distance +
+          placement.road.z +
             Math.sin(placement.road.heading) * placement.offset,
         ),
         quaternion.identity(),
@@ -3709,7 +3871,7 @@ export class WorldScene {
           position: new THREE.Vector3(
             ground.road.x + Math.cos(ground.road.heading) * ground.offset,
             ground.baseY + scale * 0.42,
-            -ground.distance + Math.sin(ground.road.heading) * ground.offset,
+            ground.road.z + Math.sin(ground.road.heading) * ground.offset,
           ),
           scale: new THREE.Vector3(
             scale,
@@ -3739,7 +3901,7 @@ export class WorldScene {
             position: new THREE.Vector3(
               ground.road.x + Math.cos(ground.road.heading) * ground.offset,
               ground.baseY + 0.18,
-              -ground.distance + Math.sin(ground.road.heading) * ground.offset,
+              ground.road.z + Math.sin(ground.road.heading) * ground.offset,
             ),
             scale: new THREE.Vector3(1, 1.6, 1),
           };
@@ -3763,7 +3925,7 @@ export class WorldScene {
             position: new THREE.Vector3(
               ground.road.x + Math.cos(ground.road.heading) * ground.offset,
               ground.baseY + 0.55,
-              -ground.distance + Math.sin(ground.road.heading) * ground.offset,
+              ground.road.z + Math.sin(ground.road.heading) * ground.offset,
             ),
             scale: new THREE.Vector3(1, 0.7 + random() * 0.8, 1),
           };
@@ -3855,7 +4017,7 @@ export class WorldScene {
     group.position.set(
       road.x + acrossX * offset,
       baseY,
-      -landmark.distanceM + acrossZ * offset,
+      road.z + acrossZ * offset,
     );
     group.rotation.set(
       occupiesRoad ? Math.atan(road.gradePercent / 100) : 0,
@@ -4222,7 +4384,7 @@ export class WorldScene {
   ): void {
     const localX = sample.x - this.originX;
     const localY = sample.elevationM - this.originElevation;
-    const localZ = -(sample.distanceM - this.originDistanceM);
+    const localZ = sample.z - this.originZ;
     this.cyclist.position.set(localX, localY + 0.02, localZ);
     this.cyclist.rotation.set(
       Math.atan(sample.gradePercent / 100),
@@ -4272,7 +4434,7 @@ export class WorldScene {
     const road = this.generator.sample(this.rideDistanceM);
     const x = road.x - this.originX;
     const y = road.elevationM - this.originElevation;
-    const z = -(this.rideDistanceM - this.originDistanceM);
+    const z = road.z - this.originZ;
     const headingX = Math.sin(road.heading);
     const headingZ = -Math.cos(road.heading);
     const sideX = -headingZ;
@@ -4299,7 +4461,7 @@ export class WorldScene {
         this.originElevation +
         1.7 +
         lookRoad.gradePercent * 0.08,
-      -(lookRoad.distanceM - this.originDistanceM),
+      lookRoad.z - this.originZ,
     );
     const smoothing = this.cameraSettings.reducedMotion
       ? 0.18
@@ -4316,7 +4478,7 @@ export class WorldScene {
       y + lightDirection.y * 160,
       z + lightDirection.z * 160,
     );
-    this.sun.target.position.set(x, y, z - 20);
+    this.sun.target.position.set(x + headingX * 20, y, z + headingZ * 20);
   }
 
   private setVisualQaDistance(distanceM: number): void {
@@ -4324,6 +4486,7 @@ export class WorldScene {
     if (targetDistance < this.originDistanceM) {
       this.originDistanceM = 0;
       this.originX = 0;
+      this.originZ = 0;
       this.originElevation = 0;
       this.worldRoot.position.set(0, 0, 0);
     }
@@ -4351,15 +4514,25 @@ export class WorldScene {
     return bestDistance;
   }
 
+  private findCityTurnDistance(afterM: number): number {
+    const firstIndex = Math.max(0, Math.ceil((afterM - 50) / 100));
+    for (let index = firstIndex; index < firstIndex + 500; index += 1) {
+      const distance = 50 + index * 100;
+      if (this.generator.cityTurnAtIntersection(distance)) return distance;
+    }
+    return -1;
+  }
+
   private rebase(): void {
     const origin = this.generator.sample(this.rideDistanceM);
     this.originDistanceM = this.rideDistanceM;
     this.originX = origin.x;
+    this.originZ = origin.z;
     this.originElevation = origin.elevationM;
     this.worldRoot.position.set(
       -this.originX,
       -this.originElevation,
-      this.originDistanceM,
+      -this.originZ,
     );
   }
 
@@ -4380,6 +4553,7 @@ declare global {
       setDistance: (distanceM: number) => void;
       setGraphics: (preference: GraphicsPreference) => void;
       findRegionDistance: (region: keyof RegionWeights) => number;
+      findCityTurnDistance: (afterM?: number) => number;
     };
   }
 }

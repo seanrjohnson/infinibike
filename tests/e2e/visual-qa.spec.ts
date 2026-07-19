@@ -177,3 +177,73 @@ test("keeps streamed graphics bounded through seams, rebasing, and quality chang
     animations: "disabled",
   });
 });
+
+test("captures an open city intersection with a deterministic route turn", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    !visualQaEnabled,
+    "Set INFINIBIKE_VISUAL_QA=1 to run city-turn visual QA.",
+  );
+  test.skip(testInfo.project.name !== "desktop", "Desktop QA matrix only.");
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 2560, height: 1440 });
+  await page.goto("/?visualQa=1");
+  await page.getByRole("button", { name: "Ride with keys or touch" }).click();
+  await page.locator("#seed").fill("windows-visual-qa");
+  await page.locator("#landscape").selectOption("city");
+  await page.locator("#graphics").selectOption("high");
+  await page.getByRole("button", { name: "Start ride" }).click();
+  await page.getByRole("button", { name: "Pause ride" }).click();
+  const turnDistance = await page.evaluate(() =>
+    window.__INFINIBIKE_VISUAL_QA__!.findCityTurnDistance(),
+  );
+  expect(turnDistance).toBeGreaterThan(0);
+
+  const headings: number[] = [];
+  for (const distance of [turnDistance - 8, turnDistance + 8]) {
+    await page.evaluate(
+      (target) => window.__INFINIBIKE_VISUAL_QA__!.setDistance(target),
+      distance,
+    );
+    await expect
+      .poll(
+        async () =>
+          (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.distanceM,
+      )
+      .toBe(distance);
+    headings.push(
+      Number(
+        (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.routeHeading,
+      ),
+    );
+  }
+  const headingChange = Math.atan2(
+    Math.sin(headings[1]! - headings[0]!),
+    Math.cos(headings[1]! - headings[0]!),
+  );
+  expect(Math.abs(headingChange)).toBeCloseTo(Math.PI / 2, 4);
+
+  await page.evaluate(
+    (target) => window.__INFINIBIKE_VISUAL_QA__!.setDistance(target),
+    turnDistance - 18,
+  );
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.distanceM,
+    )
+    .toBe(turnDistance - 18);
+  const diagnostics = await page.evaluate(() => window.__INFINIBIKE_DEBUG__!);
+  expect(Number(diagnostics.calls)).toBeLessThanOrEqual(750);
+  expect(Number(diagnostics.triangles)).toBeLessThanOrEqual(350_000);
+  expect(Number(diagnostics.geometries)).toBeLessThanOrEqual(500);
+  expect(Number(diagnostics.contextLosses)).toBe(0);
+  await page.locator(".modal-layer").evaluate((element) => {
+    (element as HTMLElement).style.display = "none";
+  });
+  await page.screenshot({
+    path: "test-results/visual-qa/city-turn-high.png",
+    animations: "disabled",
+  });
+});

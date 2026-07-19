@@ -9,6 +9,7 @@ export const CHUNK_LENGTH_M = 250;
 export const ROAD_HALF_WIDTH_M = 3.2;
 export const CHUNK_SEGMENTS = 32;
 export const ROUTE_CONTROL_LENGTH_M = 100;
+const CITY_TURN_RADIUS_M = 8;
 
 export function cityIntersectionsForChunk(chunkIndex: number): number[] {
   if (chunkIndex < 0) return [];
@@ -25,6 +26,20 @@ export function cityIntersectionsForChunk(chunkIndex: number): number[] {
     if (distance >= start) intersections.push(distance);
   }
   return intersections;
+}
+
+export function cityIntersectionBranches(
+  seed: string,
+  distanceM: number,
+): (-1 | 1)[] {
+  const normalizedSeed = seed.trim().toLowerCase() || "open-road";
+  const intersectionIndex = Math.round(
+    (distanceM - ROUTE_CONTROL_LENGTH_M / 2) / ROUTE_CONTROL_LENGTH_M,
+  );
+  const roll =
+    hashString(`${normalizedSeed}:intersection-layout:${intersectionIndex}`) %
+    100;
+  return roll < 28 ? [-1] : roll < 56 ? [1] : [-1, 1];
 }
 
 export type RegionWeights = {
@@ -55,10 +70,20 @@ export type LandmarkDescriptor = {
 export type RoadSample = {
   distanceM: number;
   x: number;
+  z: number;
   elevationM: number;
   gradePercent: number;
   heading: number;
   region: RegionWeights;
+};
+
+export type CityTurnDescriptor = {
+  distanceM: number;
+  direction: -1 | 1;
+  x: number;
+  z: number;
+  incomingHeading: number;
+  outgoingHeading: number;
 };
 
 export type WorldChunkDescriptor = {
@@ -121,6 +146,15 @@ type Boundary = {
   ySlope: number;
 };
 
+type CityIntersectionState = {
+  distanceM: number;
+  x: number;
+  z: number;
+  incomingHeading: number;
+  outgoingHeading: number;
+  direction: -1 | 0 | 1;
+};
+
 function smoothstep(value: number): number {
   const t = Math.max(0, Math.min(1, value));
   return t * t * (3 - 2 * t);
@@ -168,6 +202,8 @@ export class WorldGenerator {
   private readonly bendNoise: NoiseFunction2D;
   private readonly regionNoise: NoiseFunction2D;
   private readonly boundaries = new Map<number, Boundary>();
+  private readonly cityIntersections: CityIntersectionState[] = [];
+  private lastCityTurnIndex = -100;
 
   constructor(readonly settings: EnvironmentSettings) {
     this.seedHash = hashString(
@@ -182,14 +218,32 @@ export class WorldGenerator {
   createChunk(index: number): WorldChunkDescriptor {
     if (index < 0)
       throw new Error("World chunks cannot have negative indices.");
-    const samples = Array.from(
+    const sampleDistances = Array.from(
       { length: CHUNK_SEGMENTS + 1 },
       (_, sampleIndex) =>
-        this.sample(
-          index * CHUNK_LENGTH_M +
-            (sampleIndex / CHUNK_SEGMENTS) * CHUNK_LENGTH_M,
-        ),
+        index * CHUNK_LENGTH_M +
+        (sampleIndex / CHUNK_SEGMENTS) * CHUNK_LENGTH_M,
     );
+    if (this.settings.landscape === "city") {
+      for (const distance of cityIntersectionsForChunk(index)) {
+        if (!this.cityTurnAtIntersection(distance)) continue;
+        sampleDistances.push(
+          distance - CITY_TURN_RADIUS_M,
+          distance - CITY_TURN_RADIUS_M / 2,
+          distance,
+          distance + CITY_TURN_RADIUS_M / 2,
+          distance + CITY_TURN_RADIUS_M,
+        );
+      }
+    }
+    const samples = [...new Set(sampleDistances)]
+      .filter(
+        (distance) =>
+          distance >= index * CHUNK_LENGTH_M &&
+          distance <= (index + 1) * CHUNK_LENGTH_M,
+      )
+      .sort((a, b) => a - b)
+      .map((distance) => this.sample(distance));
     const region = this.regionAt((index + 0.5) * CHUNK_LENGTH_M);
     const primaryRegion = dominantRegion(region);
     return {
@@ -210,6 +264,28 @@ export class WorldGenerator {
       index,
       dominantRegion(this.regionAt((index + 0.5) * CHUNK_LENGTH_M)),
     );
+  }
+
+  cityTurnAtIntersection(distanceM: number): CityTurnDescriptor | undefined {
+    if (this.settings.landscape !== "city") return undefined;
+    const index = Math.round(
+      (distanceM - ROUTE_CONTROL_LENGTH_M / 2) / ROUTE_CONTROL_LENGTH_M,
+    );
+    if (index < 0) return undefined;
+    const expectedDistance =
+      ROUTE_CONTROL_LENGTH_M / 2 + index * ROUTE_CONTROL_LENGTH_M;
+    if (Math.abs(distanceM - expectedDistance) > 0.001) return undefined;
+    this.ensureCityIntersections(index);
+    const state = this.cityIntersections[index]!;
+    if (state.direction === 0) return undefined;
+    return {
+      distanceM: state.distanceM,
+      direction: state.direction,
+      x: state.x,
+      z: state.z,
+      incomingHeading: state.incomingHeading,
+      outgoingHeading: state.outgoingHeading,
+    };
   }
 
   sample(distanceM: number): RoadSample {
@@ -250,13 +326,125 @@ export class WorldGenerator {
         end.ySlope * ROUTE_CONTROL_LENGTH_M,
         local,
       ) / ROUTE_CONTROL_LENGTH_M;
+    const cityPath =
+      this.settings.landscape === "city"
+        ? this.cityPathAt(clampedDistance)
+        : undefined;
     return {
       distanceM: clampedDistance,
-      x,
+      x: cityPath?.x ?? x,
+      z: cityPath?.z ?? -clampedDistance,
       elevationM,
       gradePercent: yDerivative * 100,
-      heading: Math.atan(xDerivative),
+      heading: cityPath?.heading ?? Math.atan(xDerivative),
       region: this.regionAt(clampedDistance),
+    };
+  }
+
+  private ensureCityIntersections(targetIndex: number): void {
+    for (
+      let index = this.cityIntersections.length;
+      index <= targetIndex;
+      index += 1
+    ) {
+      const distanceM =
+        ROUTE_CONTROL_LENGTH_M / 2 + index * ROUTE_CONTROL_LENGTH_M;
+      const previous = this.cityIntersections[index - 1];
+      const previousDistance = previous?.distanceM ?? 0;
+      const incomingHeading = previous?.outgoingHeading ?? 0;
+      const distanceFromPrevious = distanceM - previousDistance;
+      const x =
+        (previous?.x ?? 0) + Math.sin(incomingHeading) * distanceFromPrevious;
+      const z =
+        (previous?.z ?? 0) - Math.cos(incomingHeading) * distanceFromPrevious;
+      const turnRoll =
+        hashString(`${this.seedHash}:${index}:city-route-turn`) % 13;
+      const canTurn = index >= 8 && index - this.lastCityTurnIndex >= 8;
+      const direction: -1 | 0 | 1 =
+        canTurn && turnRoll === 0
+          ? hashString(`${this.seedHash}:${index}:city-turn-direction`) % 2 ===
+            0
+            ? -1
+            : 1
+          : 0;
+      if (direction !== 0) this.lastCityTurnIndex = index;
+      this.cityIntersections.push({
+        distanceM,
+        x,
+        z,
+        incomingHeading,
+        outgoingHeading: incomingHeading + direction * (Math.PI / 2),
+        direction,
+      });
+    }
+  }
+
+  private cityPathAt(distanceM: number): {
+    x: number;
+    z: number;
+    heading: number;
+  } {
+    const nearbyIndex = Math.round(
+      (distanceM - ROUTE_CONTROL_LENGTH_M / 2) / ROUTE_CONTROL_LENGTH_M,
+    );
+    if (nearbyIndex >= 0) {
+      this.ensureCityIntersections(nearbyIndex);
+      const nearby = this.cityIntersections[nearbyIndex]!;
+      if (
+        nearby.direction !== 0 &&
+        Math.abs(distanceM - nearby.distanceM) <= CITY_TURN_RADIUS_M
+      ) {
+        const t =
+          (distanceM - (nearby.distanceM - CITY_TURN_RADIUS_M)) /
+          (CITY_TURN_RADIUS_M * 2);
+        const incoming = {
+          x: Math.sin(nearby.incomingHeading),
+          z: -Math.cos(nearby.incomingHeading),
+        };
+        const outgoing = {
+          x: Math.sin(nearby.outgoingHeading),
+          z: -Math.cos(nearby.outgoingHeading),
+        };
+        const start = {
+          x: nearby.x - incoming.x * CITY_TURN_RADIUS_M,
+          z: nearby.z - incoming.z * CITY_TURN_RADIUS_M,
+        };
+        const end = {
+          x: nearby.x + outgoing.x * CITY_TURN_RADIUS_M,
+          z: nearby.z + outgoing.z * CITY_TURN_RADIUS_M,
+        };
+        const inverse = 1 - t;
+        const x =
+          inverse * inverse * start.x +
+          2 * inverse * t * nearby.x +
+          t * t * end.x;
+        const z =
+          inverse * inverse * start.z +
+          2 * inverse * t * nearby.z +
+          t * t * end.z;
+        const derivativeX =
+          2 * inverse * (nearby.x - start.x) + 2 * t * (end.x - nearby.x);
+        const derivativeZ =
+          2 * inverse * (nearby.z - start.z) + 2 * t * (end.z - nearby.z);
+        return {
+          x,
+          z,
+          heading: Math.atan2(derivativeX, -derivativeZ),
+        };
+      }
+    }
+
+    const previousIndex = Math.floor(
+      (distanceM - ROUTE_CONTROL_LENGTH_M / 2) / ROUTE_CONTROL_LENGTH_M,
+    );
+    if (previousIndex < 0) return { x: 0, z: -distanceM, heading: 0 };
+    this.ensureCityIntersections(previousIndex);
+    const previous = this.cityIntersections[previousIndex]!;
+    const distanceFromPrevious = distanceM - previous.distanceM;
+    return {
+      x: previous.x + Math.sin(previous.outgoingHeading) * distanceFromPrevious,
+      z: previous.z - Math.cos(previous.outgoingHeading) * distanceFromPrevious,
+      heading: previous.outgoingHeading,
     };
   }
 
