@@ -4,6 +4,7 @@ import {
   CHUNK_LENGTH_M,
   cityIntersectionBranches,
   cityIntersectionsForChunk,
+  footprintIntersectsStreetSegments,
   WorldGenerator,
   dominantRegion,
   terrainElevationAt,
@@ -25,6 +26,46 @@ describe("WorldGenerator", () => {
     expect(cityIntersectionBranches(" STREET-GRID ", 1_250)).toEqual(
       cityIntersectionBranches("street-grid", 1_250),
     );
+  });
+
+  it("rejects building footprints crossed by a side street", () => {
+    const footprint = {
+      x: 15,
+      z: 0,
+      heading: 0,
+      halfAcross: 5,
+      halfAlong: 10,
+    };
+    expect(
+      footprintIntersectsStreetSegments(
+        footprint,
+        [{ start: { x: 0, z: -50 }, end: { x: 0, z: 50 } }],
+        8,
+      ),
+    ).toBe(false);
+    expect(
+      footprintIntersectsStreetSegments(
+        footprint,
+        [{ start: { x: -30, z: 0 }, end: { x: 30, z: 0 } }],
+        8,
+      ),
+    ).toBe(true);
+  });
+
+  it("reserves extra open space around a turning intersection", () => {
+    expect(
+      footprintIntersectsStreetSegments(
+        {
+          x: 22,
+          z: 0,
+          heading: Math.PI / 2,
+          halfAcross: 4,
+          halfAlong: 6,
+        },
+        [{ start: { x: 0, z: 0 }, end: { x: 0, z: 0 } }],
+        18,
+      ),
+    ).toBe(true);
   });
 
   it("repeats the same world for the same seed", () => {
@@ -104,7 +145,77 @@ describe("WorldGenerator", () => {
     for (let index = 1; index < samples.length; index += 1) {
       expect(
         Math.abs(samples[index]!.heading - samples[index - 1]!.heading),
-      ).toBeLessThan(0.08);
+      ).toBeLessThan(0.16);
+    }
+  });
+
+  it("creates deterministic countryside forks and rare long bends", () => {
+    const settings = {
+      ...DEFAULT_ENVIRONMENT,
+      seed: "turning-road",
+      landscape: "countryside" as const,
+    };
+    const generator = new WorldGenerator(settings);
+    const repeat = new WorldGenerator(settings);
+    const events = Array.from({ length: 240 }, (_, index) =>
+      generator.countrysideRouteEventsForChunk(index),
+    ).flat();
+    const repeatedEvents = Array.from({ length: 240 }, (_, index) =>
+      repeat.countrysideRouteEventsForChunk(index),
+    ).flat();
+    expect(events).toEqual(repeatedEvents);
+    expect(
+      events.filter((event) => event.kind === "fork").length,
+    ).toBeGreaterThan(5);
+    expect(
+      events.filter((event) => event.kind === "bend").length,
+    ).toBeGreaterThan(2);
+    expect(
+      new Set(
+        events
+          .filter((event) => event.kind === "bend")
+          .map((event) => event.angleDegrees),
+      ).size,
+    ).toBeGreaterThanOrEqual(3);
+    for (let index = 1; index < events.length; index += 1) {
+      expect(
+        events[index]!.startDistanceM - events[index - 1]!.endDistanceM,
+      ).toBeGreaterThanOrEqual(300);
+    }
+    for (const event of events) {
+      expect([30, 60, 90, 120]).toContain(event.angleDegrees);
+      const headingChange = Math.atan2(
+        Math.sin(event.outgoingHeading - event.incomingHeading),
+        Math.cos(event.outgoingHeading - event.incomingHeading),
+      );
+      expect(Math.sign(headingChange)).toBe(event.direction);
+      expect(Math.abs(headingChange)).toBeCloseTo(
+        (event.angleDegrees * Math.PI) / 180,
+        5,
+      );
+      if (event.kind === "fork") {
+        expect(event.unusedHeading).toBeDefined();
+        expect(Math.sign(event.unusedHeading! - event.incomingHeading)).toBe(
+          -event.direction,
+        );
+      } else {
+        expect(
+          event.endDistanceM - event.startDistanceM,
+        ).toBeGreaterThanOrEqual(event.angleDegrees * 6);
+      }
+      for (
+        let distance = event.startDistanceM;
+        distance < event.endDistanceM;
+        distance += 5
+      ) {
+        const first = generator.sample(distance);
+        const second = generator.sample(
+          Math.min(event.endDistanceM, distance + 5),
+        );
+        expect(
+          Math.hypot(second.x - first.x, second.z - first.z),
+        ).toBeLessThanOrEqual(5.05);
+      }
     }
   });
 

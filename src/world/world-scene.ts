@@ -15,9 +15,12 @@ import {
   ROAD_HALF_WIDTH_M,
   cityIntersectionBranches,
   cityIntersectionsForChunk,
+  footprintIntersectsStreetSegments,
   terrainElevationAt as sampleTerrainElevation,
   WorldGenerator,
   type CityTurnDescriptor,
+  type CountrysideRouteEventDescriptor,
+  type PlanarStreetSegment,
   type RegionWeights,
   type RoadSample,
   type WorldChunkDescriptor,
@@ -263,6 +266,8 @@ export class WorldScene {
         setGraphics: (preference) => this.setGraphicsPreference(preference),
         findRegionDistance: (region) => this.findRegionDistance(region),
         findCityTurnDistance: (afterM = 0) => this.findCityTurnDistance(afterM),
+        findCountrysideRouteEvent: (kind, afterM = 0, angleDegrees) =>
+          this.findCountrysideRouteEvent(kind, afterM, angleDegrees),
       };
     }
     window.addEventListener("resize", this.scheduleResize);
@@ -855,6 +860,8 @@ export class WorldScene {
     }
     const water = this.buildWater(chunk, detail);
     if (water) group.add(water);
+    if (chunk.routeEvents.some((event) => event.kind === "fork"))
+      group.add(this.buildCountrysideRouteEvents(chunk));
     group.add(this.buildScenery(chunk, detail));
     group.add(this.buildDistantScenery(chunk, detail));
     group.add(this.buildCountrysideDetails(chunk, detail));
@@ -1045,6 +1052,213 @@ export class WorldScene {
       edgeLines.name = "continuous-road-edge-lines";
       edgeLines.userData.disableShadows = true;
       group.add(edgeLines);
+    }
+    return group;
+  }
+
+  private buildCountrysideRouteEvents(
+    chunk: WorldChunkDescriptor,
+  ): THREE.Group {
+    const group = new THREE.Group();
+    group.name = `countryside-route-events-${chunk.index}`;
+    const forks = chunk.routeEvents.filter(
+      (
+        event,
+      ): event is CountrysideRouteEventDescriptor & {
+        kind: "fork";
+        unusedHeading: number;
+      } => event.kind === "fork" && event.unusedHeading !== undefined,
+    );
+    for (const event of forks) {
+      const fork = new THREE.Group();
+      fork.name = "countryside-fork-unused-branch";
+      const branchLength = 115;
+      const branchSegments = 18;
+      const branchTurnLength = 68;
+      const startRoad = this.generator.sample(event.startDistanceM);
+      type BranchPoint = {
+        x: number;
+        y: number;
+        z: number;
+        heading: number;
+        width: number;
+      };
+      const points: BranchPoint[] = [];
+      let centerX = event.x;
+      let centerZ = event.z;
+      const branchAngle = event.unusedHeading - event.incomingHeading;
+      for (let index = 0; index <= branchSegments; index += 1) {
+        const distance = (index / branchSegments) * branchLength;
+        if (index > 0) {
+          const previousDistance =
+            ((index - 1) / branchSegments) * branchLength;
+          const midpoint = (previousDistance + distance) / 2;
+          const heading =
+            event.incomingHeading +
+            branchAngle *
+              THREE.MathUtils.smoothstep(midpoint, 0, branchTurnLength);
+          const step = distance - previousDistance;
+          centerX += Math.sin(heading) * step;
+          centerZ -= Math.cos(heading) * step;
+        }
+        const heading =
+          event.incomingHeading +
+          branchAngle *
+            THREE.MathUtils.smoothstep(distance, 0, branchTurnLength);
+        let nearestDistance = event.startDistanceM + distance;
+        for (let iteration = 0; iteration < 3; iteration += 1) {
+          const selectedRoad = this.generator.sample(nearestDistance);
+          const forwardX = Math.sin(selectedRoad.heading);
+          const forwardZ = -Math.cos(selectedRoad.heading);
+          nearestDistance = THREE.MathUtils.clamp(
+            nearestDistance +
+              (centerX - selectedRoad.x) * forwardX +
+              (centerZ - selectedRoad.z) * forwardZ,
+            event.startDistanceM,
+            event.startDistanceM + branchLength + 35,
+          );
+        }
+        const selectedRoad = this.generator.sample(nearestDistance);
+        const offset =
+          (centerX - selectedRoad.x) * Math.cos(selectedRoad.heading) +
+          (centerZ - selectedRoad.z) * Math.sin(selectedRoad.heading);
+        const y =
+          index === 0
+            ? startRoad.elevationM + 0.06
+            : this.terrainElevationAt(selectedRoad, offset) + 0.14;
+        points.push({
+          x: centerX,
+          y,
+          z: centerZ,
+          heading,
+          width:
+            ROAD_HALF_WIDTH_M *
+            (1 - 0.48 * THREE.MathUtils.smoothstep(distance, 78, 115)),
+        });
+      }
+
+      const stripGeometry = (
+        extraWidth: number,
+        heightOffset: number,
+      ): THREE.BufferGeometry => {
+        const positions: number[] = [];
+        const indices: number[] = [];
+        points.forEach((point) => {
+          const acrossX = Math.cos(point.heading);
+          const acrossZ = Math.sin(point.heading);
+          const width = point.width + extraWidth;
+          positions.push(
+            point.x - acrossX * width,
+            point.y + heightOffset,
+            point.z - acrossZ * width,
+            point.x + acrossX * width,
+            point.y + heightOffset,
+            point.z + acrossZ * width,
+          );
+        });
+        for (let index = 0; index < points.length - 1; index += 1) {
+          const base = index * 2;
+          indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(positions, 3),
+        );
+        geometry.setIndex(indices);
+        geometry.computeVertexNormals();
+        return geometry;
+      };
+      const shoulder = new THREE.Mesh(
+        stripGeometry(1.35, -0.025),
+        new THREE.MeshStandardMaterial({ color: 0x8c8063, roughness: 1 }),
+      );
+      shoulder.name = "countryside-fork-shoulders";
+      shoulder.userData.receiveOnly = true;
+      const road = new THREE.Mesh(
+        stripGeometry(0, 0),
+        new THREE.MeshStandardMaterial({
+          color: this.settings.weather === "rain" ? 0x303b3b : 0x454a48,
+          roughness: this.settings.weather === "rain" ? 0.46 : 0.93,
+          metalness: this.settings.weather === "rain" ? 0.08 : 0,
+        }),
+      );
+      road.name = "countryside-fork-road";
+      road.userData.receiveOnly = true;
+
+      const edgePositions: number[] = [];
+      const edgeIndices: number[] = [];
+      points.forEach((point) => {
+        const acrossX = Math.cos(point.heading);
+        const acrossZ = Math.sin(point.heading);
+        for (const side of [-1, 1]) {
+          const offset = side * Math.max(0.7, point.width - 0.22);
+          for (const halfWidth of [-0.045, 0.045]) {
+            const edgeOffset = offset + halfWidth;
+            edgePositions.push(
+              point.x + acrossX * edgeOffset,
+              point.y + 0.035,
+              point.z + acrossZ * edgeOffset,
+            );
+          }
+        }
+      });
+      for (let index = 0; index < points.length - 1; index += 1) {
+        const base = index * 4;
+        const next = base + 4;
+        edgeIndices.push(
+          base,
+          base + 1,
+          next,
+          base + 1,
+          next + 1,
+          next,
+          base + 2,
+          base + 3,
+          next + 2,
+          base + 3,
+          next + 3,
+          next + 2,
+        );
+      }
+      const edgeGeometry = new THREE.BufferGeometry();
+      edgeGeometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(edgePositions, 3),
+      );
+      edgeGeometry.setIndex(edgeIndices);
+      const edges = new THREE.Mesh(
+        edgeGeometry,
+        new THREE.MeshBasicMaterial({ color: 0xe4d9b9 }),
+      );
+      edges.name = "countryside-fork-edge-lines";
+      edges.userData.disableShadows = true;
+
+      const dashCount = 5;
+      const dashes = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(0.11, 0.025, 3.2),
+        new THREE.MeshBasicMaterial({ color: 0xe9ddb7 }),
+        dashCount,
+      );
+      const matrix = new THREE.Matrix4();
+      const rotation = new THREE.Quaternion();
+      const euler = new THREE.Euler();
+      for (let index = 0; index < dashCount; index += 1) {
+        const point =
+          points[Math.round(((index + 1) / (dashCount + 1)) * branchSegments)]!;
+        rotation.setFromEuler(euler.set(0, -point.heading, 0));
+        matrix.compose(
+          new THREE.Vector3(point.x, point.y + 0.045, point.z),
+          rotation,
+          new THREE.Vector3(1, 1, 1),
+        );
+        dashes.setMatrixAt(index, matrix);
+      }
+      dashes.name = "countryside-fork-center-lines";
+      dashes.userData.disableShadows = true;
+      dashes.instanceMatrix.needsUpdate = true;
+      fork.add(shoulder, road, edges, dashes);
+      group.add(fork);
     }
     return group;
   }
@@ -2372,7 +2586,7 @@ export class WorldScene {
             : districtRoll < 0.57
               ? "downtown"
               : "residential";
-    const hasCivicPlaza =
+    const wantsCivicPlaza =
       detail === "near" &&
       hashString(`${this.settings.seed}:civic:${chunk.index}`) % 13 === 0;
     const civicSide = chunk.scenerySeed % 2 === 0 ? 1 : -1;
@@ -2417,6 +2631,79 @@ export class WorldScene {
         .filter((distance) => distance === chunk.endDistanceM)
         .map(intersectionLayout),
     ];
+    const branchHeadingsForLayout = (
+      layout: IntersectionLayout,
+      crossingRoad: RoadSample,
+    ): number[] =>
+      layout.turn
+        ? [
+            layout.turn.incomingHeading,
+            ...(layout.fourWay ? [layout.turn.outgoingHeading + Math.PI] : []),
+          ]
+        : layout.branches.map(
+            (side) => crossingRoad.heading + side * (Math.PI / 2),
+          );
+    const streetClearanceSegments: PlanarStreetSegment[] = [];
+    const clearanceStart = Math.max(0, chunk.startDistanceM - 120);
+    const clearanceEnd = chunk.endDistanceM + 120;
+    let previousClearanceRoad = this.generator.sample(clearanceStart);
+    for (
+      let distance = clearanceStart + 4;
+      distance <= clearanceEnd;
+      distance += 4
+    ) {
+      const road = this.generator.sample(distance);
+      streetClearanceSegments.push({
+        start: { x: previousClearanceRoad.x, z: previousClearanceRoad.z },
+        end: { x: road.x, z: road.z },
+      });
+      previousClearanceRoad = road;
+    }
+    const finalClearanceRoad = this.generator.sample(clearanceEnd);
+    streetClearanceSegments.push({
+      start: { x: previousClearanceRoad.x, z: previousClearanceRoad.z },
+      end: { x: finalClearanceRoad.x, z: finalClearanceRoad.z },
+    });
+    const turnClearancePoints: PlanarStreetSegment[] = [];
+    for (const layout of sidewalkIntersectionLayouts) {
+      const crossingRoad = this.generator.sample(layout.distance);
+      const center = {
+        x: layout.turn?.x ?? crossingRoad.x,
+        z: layout.turn?.z ?? crossingRoad.z,
+      };
+      if (layout.turn) turnClearancePoints.push({ start: center, end: center });
+      for (const heading of branchHeadingsForLayout(layout, crossingRoad)) {
+        streetClearanceSegments.push({
+          start: center,
+          end: {
+            x: center.x + Math.sin(heading) * 120,
+            z: center.z - Math.cos(heading) * 120,
+          },
+        });
+      }
+    }
+    const cityStreetClearanceM = 8.2;
+    const civicRoad = this.generator.sample(civicDistance);
+    const civicHallCenter = this.roadOffsetPosition(civicRoad, civicSide * 40);
+    const civicFootprint = {
+      x: civicHallCenter.x,
+      z: civicHallCenter.z,
+      heading: civicRoad.heading,
+      halfAcross: 7.5,
+      halfAlong: 14.5,
+    };
+    const hasCivicPlaza =
+      wantsCivicPlaza &&
+      !footprintIntersectsStreetSegments(
+        civicFootprint,
+        streetClearanceSegments,
+        cityStreetClearanceM,
+      ) &&
+      !footprintIntersectsStreetSegments(
+        civicFootprint,
+        turnClearancePoints,
+        18,
+      );
     type SidewalkPiece = {
       side: StreetSide;
       distance: number;
@@ -2673,14 +2960,7 @@ export class WorldScene {
       );
       intersectionPads.setMatrixAt(crossingIndex, matrix);
 
-      const branchHeadings = layout.turn
-        ? [
-            layout.turn.incomingHeading,
-            ...(layout.fourWay ? [layout.turn.outgoingHeading + Math.PI] : []),
-          ]
-        : layout.branches.map(
-            (side) => crossingRoad.heading + side * (Math.PI / 2),
-          );
+      const branchHeadings = branchHeadingsForLayout(layout, crossingRoad);
       for (const branchHeading of branchHeadings) {
         const branchForward = new THREE.Vector3(
           Math.sin(branchHeading),
@@ -2947,10 +3227,29 @@ export class WorldScene {
       },
     );
     const buildings = [...frontageBuildings, ...rearBuildings].filter(
-      (building) =>
-        !hasCivicPlaza ||
-        building.side !== civicSide ||
-        Math.abs(building.distance - civicDistance) > 38,
+      (building) => {
+        if (
+          hasCivicPlaza &&
+          building.side === civicSide &&
+          Math.abs(building.distance - civicDistance) <= 38
+        )
+          return false;
+        const footprint = {
+          x: building.center.x,
+          z: building.center.z,
+          heading: building.road.heading,
+          halfAcross: building.depth / 2,
+          halfAlong: building.frontage / 2,
+        };
+        return (
+          !footprintIntersectsStreetSegments(
+            footprint,
+            streetClearanceSegments,
+            cityStreetClearanceM,
+          ) &&
+          !footprintIntersectsStreetSegments(footprint, turnClearancePoints, 18)
+        );
+      },
     );
     const bodies = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1, 1, 1),
@@ -3028,7 +3327,7 @@ export class WorldScene {
     const residentialRoofs = buildings.filter(
       (building, index) =>
         district === "residential" &&
-        index < frontageBuildings.length &&
+        frontageBuildings.includes(building) &&
         index % 2 === 0,
     );
     const gableGeometry = new THREE.BufferGeometry();
@@ -3739,6 +4038,12 @@ export class WorldScene {
       instances.instanceMatrix.needsUpdate = true;
       group.add(instances);
     };
+    const nearbyForks = [
+      ...chunk.routeEvents,
+      ...(chunk.index > 0
+        ? this.generator.countrysideRouteEventsForChunk(chunk.index - 1)
+        : []),
+    ].filter((event) => event.kind === "fork");
     const groundPlacement = (
       random: () => number,
       minimumOffset = 10,
@@ -3749,11 +4054,22 @@ export class WorldScene {
       offset: number;
       baseY: number;
     } => {
-      const distance = chunk.startDistanceM + random() * CHUNK_LENGTH_M;
+      let distance = chunk.startDistanceM;
+      let offset = minimumOffset;
+      for (let attempt = 0; attempt < 7; attempt += 1) {
+        distance = chunk.startDistanceM + random() * CHUNK_LENGTH_M;
+        offset =
+          (random() > 0.5 ? 1 : -1) *
+          (minimumOffset + random() * (maximumOffset - minimumOffset));
+        const blocksFork = nearbyForks.some((event) => {
+          const progress = distance - event.startDistanceM;
+          if (progress < 0 || progress > 130) return false;
+          const branchCenter = -event.direction * progress * 0.55;
+          return Math.abs(offset - branchCenter) < 10 + progress * 0.1;
+        });
+        if (!blocksFork) break;
+      }
       const road = this.generator.sample(distance);
-      const offset =
-        (random() > 0.5 ? 1 : -1) *
-        (minimumOffset + random() * (maximumOffset - minimumOffset));
       return {
         road,
         distance,
@@ -3957,7 +4273,12 @@ export class WorldScene {
       );
     }
 
-    if (detail === "near" && chunk.region.meadow > 0.32) {
+    const forkNearChunk = nearbyForks.some(
+      (event) =>
+        event.kind === "fork" &&
+        event.startDistanceM + 130 >= chunk.startDistanceM,
+    );
+    if (detail === "near" && chunk.region.meadow > 0.32 && !forkNearChunk) {
       group.add(this.buildFence(chunk));
     }
     return group;
@@ -4461,8 +4782,6 @@ export class WorldScene {
     const z = road.z - this.originZ;
     const headingX = Math.sin(road.heading);
     const headingZ = -Math.cos(road.heading);
-    const sideX = -headingZ;
-    const sideZ = headingX;
     const motionAllowed =
       !this.reducedMotion && !this.cameraSettings.reducedMotion;
     const bob = motionAllowed ? Math.sin(this.elapsed * 2.4) * 0.025 : 0;
@@ -4471,13 +4790,18 @@ export class WorldScene {
       wide: { behind: 15, side: 3.2, height: 7.2, ahead: 18 },
       handlebar: { behind: -0.25, side: 0, height: 1.62, ahead: 26 },
     }[this.cameraSettings.mode];
+    const cameraRoad = this.generator.sample(
+      Math.max(0, this.rideDistanceM - cameraOffset.behind),
+    );
+    const cameraSideX = Math.cos(cameraRoad.heading);
+    const cameraSideZ = Math.sin(cameraRoad.heading);
     const lookRoad = this.generator.sample(
       this.rideDistanceM + cameraOffset.ahead,
     );
     const targetPosition = new THREE.Vector3(
-      x - headingX * cameraOffset.behind + sideX * cameraOffset.side,
-      y + cameraOffset.height + bob,
-      z - headingZ * cameraOffset.behind + sideZ * cameraOffset.side,
+      cameraRoad.x - this.originX + cameraSideX * cameraOffset.side,
+      cameraRoad.elevationM - this.originElevation + cameraOffset.height + bob,
+      cameraRoad.z - this.originZ + cameraSideZ * cameraOffset.side,
     );
     const lookAt = new THREE.Vector3(
       lookRoad.x - this.originX,
@@ -4547,6 +4871,27 @@ export class WorldScene {
     return -1;
   }
 
+  private findCountrysideRouteEvent(
+    kind: "fork" | "bend",
+    afterM: number,
+    angleDegrees?: 30 | 60 | 90 | 120,
+  ): number {
+    const firstChunk = Math.max(0, Math.floor(afterM / CHUNK_LENGTH_M));
+    for (let index = firstChunk; index < firstChunk + 500; index += 1) {
+      const event = this.generator
+        .countrysideRouteEventsForChunk(index)
+        .find(
+          (candidate) =>
+            candidate.kind === kind &&
+            candidate.startDistanceM >= afterM &&
+            (angleDegrees === undefined ||
+              candidate.angleDegrees === angleDegrees),
+        );
+      if (event) return event.startDistanceM;
+    }
+    return -1;
+  }
+
   private rebase(): void {
     const origin = this.generator.sample(this.rideDistanceM);
     this.originDistanceM = this.rideDistanceM;
@@ -4578,6 +4923,11 @@ declare global {
       setGraphics: (preference: GraphicsPreference) => void;
       findRegionDistance: (region: keyof RegionWeights) => number;
       findCityTurnDistance: (afterM?: number) => number;
+      findCountrysideRouteEvent: (
+        kind: "fork" | "bend",
+        afterM?: number,
+        angleDegrees?: 30 | 60 | 90 | 120,
+      ) => number;
     };
   }
 }

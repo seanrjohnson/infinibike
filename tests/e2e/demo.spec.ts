@@ -19,6 +19,14 @@ test("completes a demo ride and stores its summary", async ({ page }) => {
   await expect(
     page.getByLabel("Elevation profile for the next 1.5 kilometers"),
   ).toBeVisible();
+  const objectiveBounds = await page.locator(".ride-objective").boundingBox();
+  const viewport = page.viewportSize()!;
+  expect(objectiveBounds).not.toBeNull();
+  expect(objectiveBounds!.x).toBeGreaterThanOrEqual(0);
+  expect(objectiveBounds!.x + objectiveBounds!.width).toBeLessThanOrEqual(
+    viewport.width,
+  );
+  if (viewport.width > 760) expect(objectiveBounds!.y).toBeLessThan(40);
   await page.getByRole("button", { name: "Minimize route preview" }).click();
   await expect(
     page.getByLabel("Elevation profile for the next 1.5 kilometers"),

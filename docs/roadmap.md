@@ -46,6 +46,8 @@ This checklist tracks the next feature work in recommended implementation order.
 - [x] **Graphics safety QA:** verify chunk seams, the 2 km world rebase, quality-tier rebuilds, bounded renderer resources, context stability, and a lakeside scene in addition to the 1440p matrix.
 - [x] **Terrain and intersection integrity:** close curved-terrain backfaces, ground segmented field boundaries, open sidewalks at seeded three- and four-way junctions, and add rare deterministic city route turns.
 - [x] **Field and ride HUD polish:** replace overlapping field slabs with terrain-conforming surfaces, suppress distant crop-row shadow shimmer, move the route preview to a collapsible corner panel, and add steady hands-free demo power.
+- [x] **Turn corridor safety:** reject city building footprints that cross any generated street or turn plaza and make chase cameras follow the route through corners.
+- [x] **Countryside route events:** add deterministic rideable forks and rare persistent 30°, 60°, 90°, and 120° long bends, with the ride-mode panel moved to the top-center HUD position.
 - [ ] **Trainer verification:** retest watts, virtual speed, forward pedaling, and signed hill resistance on the physical bike after moving development to Windows.
 
 The July graphics pass expands medium/high streaming depth, replaces short exponential fog with longer linear atmospheric perspective, widens terrain, adds countryside field/grove/horizon layers, and turns the city into connected blocks with parallel streets, rear buildings, rooftop fixtures, lane markings, and additional trees. Countryside rendered correctly under Linux SwiftShader; city diagnostics were valid, but VM screenshot capture could not acquire an idle compositor frame.
@@ -59,5 +61,9 @@ The follow-up environment pass adds twelve seeded countryside sub-biomes, crop r
 The intersection-integrity pass makes countryside terrain visible from both mesh windings and subdivides broad fields and long hedges into short terrain-following sections. City junctions now vary deterministically between three and four approaches, remove sidewalks only where streets open, and occasionally carry the rider around a persistent 90-degree route turn while keeping world streaming and rebasing aligned to the new street-grid path.
 
 The field-polish pass removes overlapping raised farm tiles in favor of non-overlapping meshes sampled directly against the terrain. Thin crop accents no longer participate in the shadow map. During rides, the elevation preview occupies the upper-right corner and can collapse to its header, while demo riders can select a persistent 0–500 W effort without holding a key or pointer.
+
+The turn-safety pass checks oriented building footprints against sampled route segments, side-street arms, neighboring chunk junctions, and an expanded turning plaza before adding them to the scene. Chase cameras now use a point behind the rider on the generated route, preventing the camera from cutting across an inside corner while the rider turns.
+
+The countryside route-event pass upgrades rural roads from lateral offsets to a persistent two-dimensional path. Seeded forks retain a visible unused branch while the rider follows the selected branch, and rarer long bends change the route heading by exactly 30, 60, 90, or 120 degrees in either direction. Broad transition lengths preserve terrain coverage and smooth camera motion through the largest turns.
 
 Implementation should keep Infinibike static, local-first, deterministic by seed, and safe around optional FTMS resistance writes.

@@ -562,7 +562,7 @@ select:focus {
 }
 .ride-objective {
   position: absolute;
-  top: calc(max(1rem, env(safe-area-inset-top)) + 7.6rem);
+  top: max(1rem, env(safe-area-inset-top));
   left: 50%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

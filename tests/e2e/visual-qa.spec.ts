@@ -178,6 +178,61 @@ test("keeps streamed graphics bounded through seams, rebasing, and quality chang
   });
 });
 
+test("captures a deterministic countryside fork and long bend", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    !visualQaEnabled,
+    "Set INFINIBIKE_VISUAL_QA=1 to run countryside-route visual QA.",
+  );
+  test.skip(testInfo.project.name !== "desktop", "Desktop QA matrix only.");
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 2560, height: 1440 });
+  await page.goto("/?visualQa=1");
+  await page.getByRole("button", { name: "Ride with keys or touch" }).click();
+  await page.locator("#seed").fill("turning-road");
+  await page.locator("#landscape").selectOption("countryside");
+  await page.locator("#graphics").selectOption("high");
+  await page.getByRole("button", { name: "Start ride" }).click();
+  await page.getByRole("button", { name: "Pause ride" }).click();
+  const forkDistance = await page.evaluate(() =>
+    window.__INFINIBIKE_VISUAL_QA__!.findCountrysideRouteEvent("fork"),
+  );
+  const bendDistance = await page.evaluate(() =>
+    window.__INFINIBIKE_VISUAL_QA__!.findCountrysideRouteEvent("bend", 0, 120),
+  );
+  expect(forkDistance).toBeGreaterThan(0);
+  expect(bendDistance).toBeGreaterThan(0);
+  await page.locator(".modal-layer").evaluate((element) => {
+    (element as HTMLElement).style.display = "none";
+  });
+
+  for (const [distance, path] of [
+    [forkDistance - 24, "test-results/visual-qa/countryside-fork-high.png"],
+    [
+      bendDistance + 372,
+      "test-results/visual-qa/countryside-long-bend-high.png",
+    ],
+  ] as const) {
+    await page.evaluate(
+      (target) => window.__INFINIBIKE_VISUAL_QA__!.setDistance(target),
+      distance,
+    );
+    await expect
+      .poll(
+        async () =>
+          (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.distanceM,
+      )
+      .toBe(distance);
+    const diagnostics = await page.evaluate(() => window.__INFINIBIKE_DEBUG__!);
+    expect(Number(diagnostics.calls)).toBeLessThanOrEqual(750);
+    expect(Number(diagnostics.triangles)).toBeLessThanOrEqual(350_000);
+    expect(Number(diagnostics.geometries)).toBeLessThanOrEqual(500);
+    expect(Number(diagnostics.contextLosses)).toBe(0);
+    await page.screenshot({ path, animations: "disabled" });
+  }
+});
+
 test("captures an open city intersection with a deterministic route turn", async ({
   page,
 }, testInfo) => {
@@ -244,6 +299,20 @@ test("captures an open city intersection with a deterministic route turn", async
   });
   await page.screenshot({
     path: "test-results/visual-qa/city-turn-high.png",
+    animations: "disabled",
+  });
+  await page.evaluate(
+    (target) => window.__INFINIBIKE_VISUAL_QA__!.setDistance(target),
+    turnDistance + 12,
+  );
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.distanceM,
+    )
+    .toBe(turnDistance + 12);
+  await page.screenshot({
+    path: "test-results/visual-qa/city-turn-exit-high.png",
     animations: "disabled",
   });
 });

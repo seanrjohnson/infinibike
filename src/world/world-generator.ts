@@ -10,6 +10,9 @@ export const ROAD_HALF_WIDTH_M = 3.2;
 export const CHUNK_SEGMENTS = 32;
 export const ROUTE_CONTROL_LENGTH_M = 100;
 const CITY_TURN_RADIUS_M = 8;
+const COUNTRYSIDE_EVENT_START_M = 900;
+const COUNTRYSIDE_EVENT_SPACING_M = 800;
+const COUNTRYSIDE_PATH_STEP_M = 5;
 
 export function cityIntersectionsForChunk(chunkIndex: number): number[] {
   if (chunkIndex < 0) return [];
@@ -40,6 +43,82 @@ export function cityIntersectionBranches(
     hashString(`${normalizedSeed}:intersection-layout:${intersectionIndex}`) %
     100;
   return roll < 28 ? [-1] : roll < 56 ? [1] : [-1, 1];
+}
+
+export type PlanarStreetSegment = {
+  start: { x: number; z: number };
+  end: { x: number; z: number };
+};
+
+export type OrientedFootprint = {
+  x: number;
+  z: number;
+  heading: number;
+  halfAcross: number;
+  halfAlong: number;
+};
+
+function segmentIntersectsBox(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  halfWidth: number,
+  halfHeight: number,
+): boolean {
+  let minimumT = 0;
+  let maximumT = 1;
+  const clipAxis = (
+    start: number,
+    delta: number,
+    minimum: number,
+    maximum: number,
+  ): boolean => {
+    if (Math.abs(delta) < 1e-8) return start >= minimum && start <= maximum;
+    let first = (minimum - start) / delta;
+    let second = (maximum - start) / delta;
+    if (first > second) [first, second] = [second, first];
+    minimumT = Math.max(minimumT, first);
+    maximumT = Math.min(maximumT, second);
+    return minimumT <= maximumT;
+  };
+  return (
+    clipAxis(startX, endX - startX, -halfWidth, halfWidth) &&
+    clipAxis(startY, endY - startY, -halfHeight, halfHeight)
+  );
+}
+
+export function footprintIntersectsStreetSegments(
+  footprint: OrientedFootprint,
+  segments: PlanarStreetSegment[],
+  clearanceM: number,
+): boolean {
+  const acrossX = Math.cos(footprint.heading);
+  const acrossZ = Math.sin(footprint.heading);
+  const forwardX = Math.sin(footprint.heading);
+  const forwardZ = -Math.cos(footprint.heading);
+  const halfAcross = footprint.halfAcross + Math.max(0, clearanceM);
+  const halfAlong = footprint.halfAlong + Math.max(0, clearanceM);
+  const local = (point: { x: number; z: number }): [number, number] => {
+    const deltaX = point.x - footprint.x;
+    const deltaZ = point.z - footprint.z;
+    return [
+      deltaX * acrossX + deltaZ * acrossZ,
+      deltaX * forwardX + deltaZ * forwardZ,
+    ];
+  };
+  return segments.some((segment) => {
+    const start = local(segment.start);
+    const end = local(segment.end);
+    return segmentIntersectsBox(
+      start[0],
+      start[1],
+      end[0],
+      end[1],
+      halfAcross,
+      halfAlong,
+    );
+  });
 }
 
 export type RegionWeights = {
@@ -86,6 +165,19 @@ export type CityTurnDescriptor = {
   outgoingHeading: number;
 };
 
+export type CountrysideRouteEventDescriptor = {
+  kind: "fork" | "bend";
+  startDistanceM: number;
+  endDistanceM: number;
+  direction: -1 | 1;
+  angleDegrees: 30 | 60 | 90 | 120;
+  x: number;
+  z: number;
+  incomingHeading: number;
+  outgoingHeading: number;
+  unusedHeading?: number;
+};
+
 export type WorldChunkDescriptor = {
   index: number;
   startDistanceM: number;
@@ -94,6 +186,7 @@ export type WorldChunkDescriptor = {
   region: RegionWeights;
   dominantRegion: RegionId;
   scenerySeed: number;
+  routeEvents: CountrysideRouteEventDescriptor[];
   landmark?: LandmarkDescriptor;
 };
 
@@ -155,6 +248,21 @@ type CityIntersectionState = {
   direction: -1 | 0 | 1;
 };
 
+type CountrysideRouteEventState = {
+  kind: "fork" | "bend";
+  startDistanceM: number;
+  endDistanceM: number;
+  direction: -1 | 1;
+  angleDegrees: 30 | 60 | 90 | 120;
+  headingDeltaRadians: number;
+};
+
+type CountrysidePathKnot = {
+  distanceM: number;
+  x: number;
+  z: number;
+};
+
 function smoothstep(value: number): number {
   const t = Math.max(0, Math.min(1, value));
   return t * t * (3 - 2 * t);
@@ -203,7 +311,13 @@ export class WorldGenerator {
   private readonly regionNoise: NoiseFunction2D;
   private readonly boundaries = new Map<number, Boundary>();
   private readonly cityIntersections: CityIntersectionState[] = [];
+  private readonly countrysideEvents: CountrysideRouteEventState[] = [];
+  private readonly countrysidePathKnots: CountrysidePathKnot[] = [
+    { distanceM: 0, x: 0, z: 0 },
+  ];
   private lastCityTurnIndex = -100;
+  private countrysideCandidateCount = 0;
+  private lastCountrysideEventEndM = 0;
 
   constructor(readonly settings: EnvironmentSettings) {
     this.seedHash = hashString(
@@ -224,6 +338,13 @@ export class WorldGenerator {
         index * CHUNK_LENGTH_M +
         (sampleIndex / CHUNK_SEGMENTS) * CHUNK_LENGTH_M,
     );
+    const routeEvents =
+      this.settings.landscape === "countryside"
+        ? this.countrysideRouteEventsForChunk(index)
+        : [];
+    for (const event of routeEvents) {
+      sampleDistances.push(event.startDistanceM, event.endDistanceM);
+    }
     if (this.settings.landscape === "city") {
       for (const distance of cityIntersectionsForChunk(index)) {
         if (!this.cityTurnAtIntersection(distance)) continue;
@@ -254,6 +375,7 @@ export class WorldGenerator {
       region,
       dominantRegion: primaryRegion,
       scenerySeed: hashString(`${this.seedHash}:${index}:scenery`),
+      routeEvents,
       landmark: this.landmarkAtChunk(index),
     };
   }
@@ -286,6 +408,38 @@ export class WorldGenerator {
       incomingHeading: state.incomingHeading,
       outgoingHeading: state.outgoingHeading,
     };
+  }
+
+  countrysideRouteEventsForChunk(
+    chunkIndex: number,
+  ): CountrysideRouteEventDescriptor[] {
+    if (this.settings.landscape !== "countryside" || chunkIndex < 0) return [];
+    const start = chunkIndex * CHUNK_LENGTH_M;
+    const end = start + CHUNK_LENGTH_M;
+    this.ensureCountrysideEvents(end);
+    return this.countrysideEvents
+      .filter(
+        (event) => event.startDistanceM >= start && event.startDistanceM < end,
+      )
+      .map((event) => {
+        const startPath = this.countrysidePathAt(event.startDistanceM);
+        const outgoingHeading = this.countrysideHeadingAt(event.endDistanceM);
+        return {
+          kind: event.kind,
+          startDistanceM: event.startDistanceM,
+          endDistanceM: event.endDistanceM,
+          direction: event.direction,
+          angleDegrees: event.angleDegrees,
+          x: startPath.x,
+          z: startPath.z,
+          incomingHeading: startPath.heading,
+          outgoingHeading,
+          unusedHeading:
+            event.kind === "fork"
+              ? startPath.heading - event.direction * (Math.PI / 6)
+              : undefined,
+        };
+      });
   }
 
   sample(distanceM: number): RoadSample {
@@ -330,14 +484,136 @@ export class WorldGenerator {
       this.settings.landscape === "city"
         ? this.cityPathAt(clampedDistance)
         : undefined;
+    const countrysidePath =
+      this.settings.landscape === "countryside"
+        ? this.countrysidePathAt(clampedDistance)
+        : undefined;
     return {
       distanceM: clampedDistance,
-      x: cityPath?.x ?? x,
-      z: cityPath?.z ?? -clampedDistance,
+      x: cityPath?.x ?? countrysidePath?.x ?? x,
+      z: cityPath?.z ?? countrysidePath?.z ?? -clampedDistance,
       elevationM,
       gradePercent: yDerivative * 100,
-      heading: cityPath?.heading ?? Math.atan(xDerivative),
+      heading:
+        cityPath?.heading ?? countrysidePath?.heading ?? Math.atan(xDerivative),
       region: this.regionAt(clampedDistance),
+    };
+  }
+
+  private ensureCountrysideEvents(distanceM: number): void {
+    while (
+      COUNTRYSIDE_EVENT_START_M +
+        this.countrysideCandidateCount * COUNTRYSIDE_EVENT_SPACING_M <=
+      distanceM
+    ) {
+      const candidateIndex = this.countrysideCandidateCount;
+      const startDistanceM =
+        COUNTRYSIDE_EVENT_START_M +
+        candidateIndex * COUNTRYSIDE_EVENT_SPACING_M;
+      this.countrysideCandidateCount += 1;
+      const roll =
+        hashString(`${this.seedHash}:${candidateIndex}:country-route-event`) %
+        100;
+      const kind = roll < 24 ? "fork" : roll < 34 ? "bend" : undefined;
+      if (!kind || startDistanceM < this.lastCountrysideEventEndM + 300)
+        continue;
+      const direction: -1 | 1 =
+        hashString(`${this.seedHash}:${candidateIndex}:country-direction`) %
+          2 ===
+        0
+          ? -1
+          : 1;
+      const bendAngles = [30, 60, 90, 120] as const;
+      const angleDegrees =
+        kind === "fork"
+          ? 30
+          : bendAngles[
+              hashString(
+                `${this.seedHash}:${candidateIndex}:country-bend-angle`,
+              ) % bendAngles.length
+            ]!;
+      const lengthM = kind === "fork" ? 180 : angleDegrees * 6.2;
+      const endDistanceM = startDistanceM + lengthM;
+      const angleRadians = (angleDegrees * Math.PI) / 180;
+      const baseHeadingChange =
+        this.countrysideBaseHeading(endDistanceM) -
+        this.countrysideBaseHeading(startDistanceM);
+      this.countrysideEvents.push({
+        kind,
+        startDistanceM,
+        endDistanceM,
+        direction,
+        angleDegrees,
+        headingDeltaRadians: direction * angleRadians - baseHeadingChange,
+      });
+      this.lastCountrysideEventEndM = endDistanceM;
+    }
+  }
+
+  private countrysideBaseHeading(distanceM: number): number {
+    const index = Math.floor(distanceM / ROUTE_CONTROL_LENGTH_M);
+    const local =
+      (distanceM - index * ROUTE_CONTROL_LENGTH_M) / ROUTE_CONTROL_LENGTH_M;
+    const start = this.boundary(index);
+    const end = this.boundary(index + 1);
+    const derivative =
+      hermiteDerivative(
+        start.x,
+        end.x,
+        start.xSlope * ROUTE_CONTROL_LENGTH_M,
+        end.xSlope * ROUTE_CONTROL_LENGTH_M,
+        local,
+      ) / ROUTE_CONTROL_LENGTH_M;
+    return Math.atan(derivative);
+  }
+
+  private countrysideHeadingAt(distanceM: number): number {
+    this.ensureCountrysideEvents(distanceM);
+    let eventHeading = 0;
+    for (const event of this.countrysideEvents) {
+      if (distanceM < event.startDistanceM) break;
+      if (distanceM >= event.endDistanceM) {
+        eventHeading += event.headingDeltaRadians;
+        continue;
+      }
+      const progress =
+        (distanceM - event.startDistanceM) /
+        (event.endDistanceM - event.startDistanceM);
+      eventHeading += event.headingDeltaRadians * smoothstep(progress);
+      break;
+    }
+    return this.countrysideBaseHeading(distanceM) + eventHeading;
+  }
+
+  private ensureCountrysidePathKnots(targetIndex: number): void {
+    while (this.countrysidePathKnots.length <= targetIndex) {
+      const previous = this.countrysidePathKnots.at(-1)!;
+      const midpoint = previous.distanceM + COUNTRYSIDE_PATH_STEP_M / 2;
+      const heading = this.countrysideHeadingAt(midpoint);
+      this.countrysidePathKnots.push({
+        distanceM: previous.distanceM + COUNTRYSIDE_PATH_STEP_M,
+        x: previous.x + Math.sin(heading) * COUNTRYSIDE_PATH_STEP_M,
+        z: previous.z - Math.cos(heading) * COUNTRYSIDE_PATH_STEP_M,
+      });
+    }
+  }
+
+  private countrysidePathAt(distanceM: number): {
+    x: number;
+    z: number;
+    heading: number;
+  } {
+    const knotIndex = Math.floor(distanceM / COUNTRYSIDE_PATH_STEP_M);
+    this.ensureCountrysidePathKnots(knotIndex);
+    const knot = this.countrysidePathKnots[knotIndex]!;
+    const remaining = distanceM - knot.distanceM;
+    const integrationHeading = this.countrysideHeadingAt(
+      knot.distanceM + remaining / 2,
+    );
+    return {
+      x: knot.x + Math.sin(integrationHeading) * remaining,
+      z: knot.z - Math.cos(integrationHeading) * remaining,
+      heading: this.countrysideHeadingAt(distanceM),
     };
   }
 
