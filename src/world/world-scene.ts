@@ -540,6 +540,8 @@ export class WorldScene {
     );
     this.renderer.shadowMap.enabled = quality.shadows;
     this.sun.castShadow = quality.shadows;
+    const shadowMapSize = level === "high" ? 2048 : 1024;
+    this.sun.shadow.mapSize.set(shadowMapSize, shadowMapSize);
     if (this.startApron) setShadow(this.startApron, quality.shadows);
     setShadow(this.movingScenery, quality.shadows);
     this.chunks.forEach(({ group }) => setShadow(group, quality.shadows));
@@ -632,7 +634,8 @@ export class WorldScene {
           ? 1.3
           : 2.25;
     this.sun.position.copy(this.lightDirection()).multiplyScalar(160);
-    this.sun.shadow.mapSize.set(1024, 1024);
+    this.sun.shadow.bias = -0.00012;
+    this.sun.shadow.normalBias = 0.035;
     this.sun.shadow.camera.left = -70;
     this.sun.shadow.camera.right = 70;
     this.sun.shadow.camera.top = 70;
@@ -2131,6 +2134,7 @@ export class WorldScene {
     material: THREE.Material,
     name: string,
     maximumStepM = 3,
+    terrainConforming = false,
   ): THREE.Mesh {
     const positions: number[] = [];
     const indices: number[] = [];
@@ -2150,12 +2154,15 @@ export class WorldScene {
           const offset = strip.offsetM + edge * strip.widthM * 0.5;
           const x = road.x + Math.cos(road.heading) * offset;
           const z = road.z + Math.sin(road.heading) * offset;
+          const surfaceElevation = terrainConforming
+            ? this.terrainElevationAt(road, offset)
+            : road.elevationM;
           positions.push(
             x,
-            road.elevationM + strip.topOffsetM,
+            surfaceElevation + strip.topOffsetM,
             z,
             x,
-            road.elevationM + strip.bottomOffsetM,
+            surfaceElevation + strip.bottomOffsetM,
             z,
           );
         }
@@ -2202,6 +2209,203 @@ export class WorldScene {
     slabs.name = name;
     slabs.userData.receiveOnly = true;
     return slabs;
+  }
+
+  private buildTerrainPatches(
+    patches: {
+      centerDistanceM: number;
+      lengthM: number;
+      offsetM: number;
+      widthM: number;
+      heightOffsetM: number;
+    }[],
+    material: THREE.Material,
+    name: string,
+    maximumStepM = 4,
+  ): THREE.Mesh {
+    const positions: number[] = [];
+    const indices: number[] = [];
+    for (const patch of patches) {
+      if (patch.lengthM <= 0.05 || patch.widthM <= 0.05) continue;
+      const alongSegments = Math.max(
+        1,
+        Math.ceil(patch.lengthM / maximumStepM),
+      );
+      const acrossSegments = Math.max(
+        1,
+        Math.ceil(patch.widthM / maximumStepM),
+      );
+      const vertexStart = positions.length / 3;
+      for (let along = 0; along <= alongSegments; along += 1) {
+        const distance =
+          patch.centerDistanceM + (along / alongSegments - 0.5) * patch.lengthM;
+        const road = this.generator.sample(Math.max(0, distance));
+        for (let across = 0; across <= acrossSegments; across += 1) {
+          const offset =
+            patch.offsetM + (across / acrossSegments - 0.5) * patch.widthM;
+          const position = this.roadOffsetPosition(
+            road,
+            offset,
+            patch.heightOffsetM,
+          );
+          positions.push(position.x, position.y, position.z);
+        }
+      }
+      const rowLength = acrossSegments + 1;
+      for (let along = 0; along < alongSegments; along += 1) {
+        for (let across = 0; across < acrossSegments; across += 1) {
+          const bottomLeft = vertexStart + along * rowLength + across;
+          const topLeft = bottomLeft + rowLength;
+          indices.push(
+            bottomLeft,
+            bottomLeft + 1,
+            topLeft,
+            bottomLeft + 1,
+            topLeft + 1,
+            topLeft,
+          );
+        }
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(positions, 3),
+    );
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const surfaces = new THREE.Mesh(geometry, material);
+    surfaces.name = name;
+    surfaces.userData.receiveOnly = true;
+    return surfaces;
+  }
+
+  private buildProjectedTerrainPatches(
+    patches: {
+      centerX: number;
+      centerZ: number;
+      heading: number;
+      lengthM: number;
+      widthM: number;
+      heightOffsetM: number;
+      routeDistanceM: number;
+    }[],
+    material: THREE.Material,
+    name: string,
+    maximumStepM = 5,
+    smoothLongitudinal = false,
+  ): THREE.Mesh {
+    const positions: number[] = [];
+    const indices: number[] = [];
+    for (const patch of patches) {
+      const alongSegments = Math.max(
+        1,
+        Math.ceil(patch.lengthM / maximumStepM),
+      );
+      const acrossSegments = Math.max(
+        1,
+        Math.ceil(patch.widthM / maximumStepM),
+      );
+      const forwardX = Math.sin(patch.heading);
+      const forwardZ = -Math.cos(patch.heading);
+      const acrossX = Math.cos(patch.heading);
+      const acrossZ = Math.sin(patch.heading);
+      const vertexStart = positions.length / 3;
+      let rowElevations: number[] = [];
+      if (smoothLongitudinal) {
+        rowElevations = Array.from(
+          { length: alongSegments + 1 },
+          (_, along) => {
+            const alongM = (along / alongSegments - 0.5) * patch.lengthM;
+            const x = patch.centerX + forwardX * alongM;
+            const z = patch.centerZ + forwardZ * alongM;
+            const projection = this.projectWorldPointToRoute(
+              x,
+              z,
+              patch.routeDistanceM,
+              Math.max(0, patch.routeDistanceM - patch.lengthM - 160),
+              patch.routeDistanceM + patch.lengthM + 160,
+            );
+            return this.terrainElevationAt(projection.road, projection.offset);
+          },
+        );
+        for (let pass = 0; pass < 4; pass += 1) {
+          rowElevations = rowElevations.map((elevation, index, values) => {
+            if (index === 0 || index === values.length - 1) return elevation;
+            return (
+              values[index - 1]! * 0.25 +
+              elevation * 0.5 +
+              values[index + 1]! * 0.25
+            );
+          });
+        }
+        const maximumRise = (patch.lengthM / alongSegments) * 0.075;
+        for (let index = 1; index < rowElevations.length; index += 1) {
+          rowElevations[index] = THREE.MathUtils.clamp(
+            rowElevations[index]!,
+            rowElevations[index - 1]! - maximumRise,
+            rowElevations[index - 1]! + maximumRise,
+          );
+        }
+        for (let index = rowElevations.length - 2; index >= 0; index -= 1) {
+          rowElevations[index] = THREE.MathUtils.clamp(
+            rowElevations[index]!,
+            rowElevations[index + 1]! - maximumRise,
+            rowElevations[index + 1]! + maximumRise,
+          );
+        }
+      }
+      for (let along = 0; along <= alongSegments; along += 1) {
+        const alongM = (along / alongSegments - 0.5) * patch.lengthM;
+        for (let across = 0; across <= acrossSegments; across += 1) {
+          const acrossM = (across / acrossSegments - 0.5) * patch.widthM;
+          const x = patch.centerX + forwardX * alongM + acrossX * acrossM;
+          const z = patch.centerZ + forwardZ * alongM + acrossZ * acrossM;
+          const elevation = smoothLongitudinal
+            ? rowElevations[along]!
+            : (() => {
+                const projection = this.projectWorldPointToRoute(
+                  x,
+                  z,
+                  patch.routeDistanceM,
+                  Math.max(0, patch.routeDistanceM - patch.lengthM - 160),
+                  patch.routeDistanceM + patch.lengthM + 160,
+                );
+                return this.terrainElevationAt(
+                  projection.road,
+                  projection.offset,
+                );
+              })();
+          positions.push(x, elevation + patch.heightOffsetM, z);
+        }
+      }
+      const rowLength = acrossSegments + 1;
+      for (let along = 0; along < alongSegments; along += 1) {
+        for (let across = 0; across < acrossSegments; across += 1) {
+          const bottomLeft = vertexStart + along * rowLength + across;
+          const topLeft = bottomLeft + rowLength;
+          indices.push(
+            bottomLeft,
+            bottomLeft + 1,
+            topLeft,
+            bottomLeft + 1,
+            topLeft + 1,
+            topLeft,
+          );
+        }
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(positions, 3),
+    );
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const surfaces = new THREE.Mesh(geometry, material);
+    surfaces.name = name;
+    surfaces.userData.receiveOnly = true;
+    return surfaces;
   }
 
   private buildTerrain(
@@ -3818,6 +4022,7 @@ export class WorldScene {
       new THREE.MeshStandardMaterial({ color: 0x505553, roughness: 0.96 }),
       "city-parallel-streets",
       4,
+      true,
     );
     const blockSidewalks = this.buildRouteSlabs(
       ([-1, 1] as const).flatMap((side) =>
@@ -3830,6 +4035,7 @@ export class WorldScene {
       new THREE.MeshLambertMaterial({ color: 0x9ca29d }),
       "city-parallel-sidewalks",
       3,
+      true,
     );
     const blockMarkings = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.09, 0.025, 3.4),
@@ -3851,7 +4057,7 @@ export class WorldScene {
         );
         const streetCenter = new THREE.Vector3(
           road.x,
-          road.elevationM - 0.2,
+          this.terrainElevationAt(road, side * parallelStreetOffset) - 0.2,
           road.z,
         ).addScaledVector(across, side * parallelStreetOffset);
         matrix.compose(
@@ -3883,61 +4089,51 @@ export class WorldScene {
           : district === "downtown"
             ? 0x898a82
             : 0x7d8377;
-    const blockPads = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshLambertMaterial({ color: blockPadColor }),
-      blockIntervals.length * 2,
+    const blockPadPatches = blockIntervals.flatMap(({ start, end }) =>
+      ([-1, 1] as const).map((side) => ({
+        centerDistanceM: (start + end) / 2,
+        lengthM: Math.max(4, end - start - 11),
+        offsetM: side * 29.5,
+        widthM: 41,
+        heightOffsetM: 0.025,
+      })),
     );
-    const blockAlleys = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1, 1, 1),
+    const blockPads = this.buildTerrainPatches(
+      blockPadPatches,
+      new THREE.MeshLambertMaterial({ color: blockPadColor }),
+      "city-block-pads",
+    );
+    const blockAlleys = this.buildTerrainPatches(
+      blockIntervals.flatMap(({ start, end }) =>
+        ([-1, 1] as const).map((side) => ({
+          centerDistanceM: (start + end) / 2,
+          lengthM: district === "park" ? 2.4 : 3.5,
+          offsetM: side * 29.5,
+          widthM: 41.5,
+          heightOffsetM: 0.075,
+        })),
+      ),
       new THREE.MeshStandardMaterial({
         color: district === "park" ? 0xb0aa96 : 0x555a57,
         roughness: 0.95,
       }),
-      blockIntervals.length * 2,
+      "city-block-alleys",
+      3,
     );
-    blockIntervals.forEach(({ start, end }, blockIndex) => {
-      const distance = (start + end) / 2;
-      const road = this.generator.sample(distance);
-      rotation.setFromEuler(
-        euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
-      );
-      for (const [sideIndex, side] of [-1, 1].entries()) {
-        const offset = side * 29.5;
-        const center = this.roadOffsetPosition(road, offset, 0.03);
-        matrix.compose(
-          center,
-          rotation,
-          new THREE.Vector3(41, 0.12, Math.max(4, end - start - 11)),
-        );
-        blockPads.setMatrixAt(blockIndex * 2 + sideIndex, matrix);
-        matrix.compose(
-          center.clone().setY(center.y + 0.08),
-          rotation,
-          new THREE.Vector3(41.5, 0.055, district === "park" ? 2.4 : 3.5),
-        );
-        blockAlleys.setMatrixAt(blockIndex * 2 + sideIndex, matrix);
-      }
-    });
-    blockPads.name = "city-block-pads";
-    blockAlleys.name = "city-block-alleys";
-    blockPads.userData.receiveOnly = true;
-    blockAlleys.userData.receiveOnly = true;
-    blockPads.instanceMatrix.needsUpdate = true;
-    blockAlleys.instanceMatrix.needsUpdate = true;
     group.add(blockPads, blockAlleys);
 
-    const intersectionPads = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1, 0.08, 1),
-      new THREE.MeshStandardMaterial({ color: 0x4b504e, roughness: 0.95 }),
-      crossingDistances.length,
-    );
-    const branchInstanceCount = intersectionLayouts.reduce(
-      (count, layout) =>
-        count +
-        (layout.turn ? (layout.fourWay ? 2 : 1) : layout.branches.length),
-      0,
-    );
+    type ProjectedCityPatch = {
+      centerX: number;
+      centerZ: number;
+      heading: number;
+      lengthM: number;
+      widthM: number;
+      heightOffsetM: number;
+      routeDistanceM: number;
+    };
+    const intersectionSurfacePatches: ProjectedCityPatch[] = [];
+    const branchRoadPatches: ProjectedCityPatch[] = [];
+    const branchSidewalkPatches: ProjectedCityPatch[] = [];
     const branchDashCount = intersectionLayouts.reduce((count, layout) => {
       const branchCount = layout.turn
         ? layout.fourWay
@@ -3949,21 +4145,6 @@ export class WorldScene {
         branchCount * Math.floor((branchLengthForLayout(layout) - 20) / 18)
       );
     }, 0);
-    const crossStreetGround = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1, 0.08, 1),
-      new THREE.MeshLambertMaterial({ color: 0x66716d }),
-      branchInstanceCount,
-    );
-    const crossStreetArms = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1, 0.08, 1),
-      new THREE.MeshStandardMaterial({ color: 0x4b504e, roughness: 0.95 }),
-      branchInstanceCount,
-    );
-    const crossStreetSidewalks = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(2.8, 0.16, 1),
-      new THREE.MeshLambertMaterial({ color: 0x9ca29d }),
-      branchInstanceCount * 2,
-    );
     const crossStreetMarkings = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.11, 0.025, 3.4),
       new THREE.MeshBasicMaterial({ color: 0xe0b83f }),
@@ -3990,8 +4171,6 @@ export class WorldScene {
       new THREE.MeshBasicMaterial({ color: 0xe5a43b }),
       signalPoleCount,
     );
-    let branchIndex = 0;
-    let branchSidewalkIndex = 0;
     let branchMarkingIndex = 0;
     intersectionLayouts.forEach((layout, crossingIndex) => {
       const crossingDistance = layout.distance;
@@ -4003,23 +4182,18 @@ export class WorldScene {
         crossingRoad.elevationM,
         layout.turn?.z ?? crossingRoad.z,
       );
-      rotation.setFromEuler(
-        euler.set(
-          Math.atan(crossingRoad.gradePercent / 100),
-          -intersectionHeading,
-          0,
-        ),
-      );
-      matrix.compose(
-        intersectionCenter.clone().setY(crossingRoad.elevationM - 0.01),
-        rotation,
-        new THREE.Vector3(
-          layout.turn ? intersectionHalfWidth(layout) * 2 : 17,
-          1,
-          layout.turn ? intersectionHalfWidth(layout) * 2 : 17,
-        ),
-      );
-      intersectionPads.setMatrixAt(crossingIndex, matrix);
+      const intersectionSize = layout.turn
+        ? intersectionHalfWidth(layout) * 2
+        : 17;
+      intersectionSurfacePatches.push({
+        centerX: intersectionCenter.x,
+        centerZ: intersectionCenter.z,
+        heading: intersectionHeading,
+        lengthM: intersectionSize,
+        widthM: intersectionSize,
+        heightOffsetM: 0.045,
+        routeDistanceM: crossingDistance,
+      });
 
       const branchHeadings = branchHeadingsForLayout(layout, crossingRoad);
       for (const branchHeading of branchHeadings) {
@@ -4035,13 +4209,10 @@ export class WorldScene {
           Math.sin(branchHeading),
         );
         const centerAlong = ROAD_HALF_WIDTH_M + branchLength / 2;
-        const centerElevation =
-          crossingRoad.elevationM +
-          (crossingRoad.gradePercent / 100) * centerAlong;
         const branchCenter = intersectionCenter
           .clone()
           .addScaledVector(branchForward, centerAlong)
-          .setY(centerElevation + 0.02);
+          .setY(0);
         rotation.setFromEuler(
           euler.set(
             Math.atan(crossingRoad.gradePercent / 100),
@@ -4049,54 +4220,56 @@ export class WorldScene {
             0,
           ),
         );
-        matrix.compose(
-          branchCenter.clone().setY(branchCenter.y - 0.12),
-          rotation,
-          new THREE.Vector3(
-            layout.context === "urban-core"
-              ? 104
-              : layout.context === "neighborhood"
-                ? 86
-                : 64,
-            1,
-            branchLength,
-          ),
-        );
-        crossStreetGround.setMatrixAt(branchIndex, matrix);
-        matrix.compose(
-          branchCenter,
-          rotation,
-          new THREE.Vector3(8.5, 1, branchLength),
-        );
-        crossStreetArms.setMatrixAt(branchIndex, matrix);
+        const patchBase = {
+          centerX: branchCenter.x,
+          centerZ: branchCenter.z,
+          heading: branchHeading,
+          lengthM: branchLength,
+          routeDistanceM: crossingDistance,
+        };
+        branchRoadPatches.push({
+          ...patchBase,
+          widthM: 8.5,
+          heightOffsetM: 0.055,
+        });
         for (const side of [-1, 1]) {
-          matrix.compose(
-            branchCenter.clone().addScaledVector(branchAcross, side * 6.1),
-            rotation,
-            new THREE.Vector3(1, 1, branchLength),
-          );
-          crossStreetSidewalks.setMatrixAt(branchSidewalkIndex, matrix);
-          branchSidewalkIndex += 1;
+          const sidewalkCenter = branchCenter
+            .clone()
+            .addScaledVector(branchAcross, side * 6.1);
+          branchSidewalkPatches.push({
+            ...patchBase,
+            centerX: sidewalkCenter.x,
+            centerZ: sidewalkCenter.z,
+            widthM: 2.8,
+            heightOffsetM: 0.095,
+          });
         }
         const dashCount = Math.floor((branchLength - 20) / 18);
         for (let dash = 0; dash < dashCount; dash += 1) {
           const along = 16 + dash * 18;
+          const dashCenter = intersectionCenter
+            .clone()
+            .addScaledVector(branchForward, along);
+          const dashProjection = this.projectWorldPointToRoute(
+            dashCenter.x,
+            dashCenter.z,
+            crossingDistance,
+            Math.max(0, crossingDistance - branchLength - 160),
+            crossingDistance + branchLength + 160,
+          );
           matrix.compose(
-            intersectionCenter
-              .clone()
-              .addScaledVector(branchForward, along)
-              .setY(
-                crossingRoad.elevationM +
-                  (crossingRoad.gradePercent / 100) * along +
-                  0.095,
-              ),
+            dashCenter.setY(
+              this.terrainElevationAt(
+                dashProjection.road,
+                dashProjection.offset,
+              ) + 0.115,
+            ),
             rotation,
             new THREE.Vector3(1, 1, 1),
           );
           crossStreetMarkings.setMatrixAt(branchMarkingIndex, matrix);
           branchMarkingIndex += 1;
         }
-        branchIndex += 1;
       }
 
       for (let index = 0; index < 12; index += 1) {
@@ -4138,6 +4311,17 @@ export class WorldScene {
             .clone()
             .addScaledVector(across, side * 7.2)
             .addScaledVector(forward, approach * 5.6);
+          const signalProjection = this.projectWorldPointToRoute(
+            base.x,
+            base.z,
+            crossingDistance,
+            Math.max(0, crossingDistance - 40),
+            crossingDistance + 40,
+          );
+          base.y = this.terrainElevationAt(
+            signalProjection.road,
+            signalProjection.offset,
+          );
           matrix.compose(
             base.clone().setY(base.y + 1.7),
             rotation.identity(),
@@ -4167,22 +4351,30 @@ export class WorldScene {
         }
       }
     });
-    intersectionPads.name = "city-intersection-pads";
-    crossStreetGround.name = "city-cross-street-ground-corridors";
-    crossStreetArms.name = "city-cross-street-arms";
-    crossStreetSidewalks.name = "city-cross-street-sidewalks";
+    const intersectionPads = this.buildProjectedTerrainPatches(
+      intersectionSurfacePatches,
+      new THREE.MeshStandardMaterial({ color: 0x4b504e, roughness: 0.95 }),
+      "city-intersection-pads",
+      2.5,
+    );
+    const crossStreetArms = this.buildProjectedTerrainPatches(
+      branchRoadPatches,
+      new THREE.MeshStandardMaterial({ color: 0x4b504e, roughness: 0.95 }),
+      "city-cross-street-arms",
+      4,
+      true,
+    );
+    const crossStreetSidewalks = this.buildProjectedTerrainPatches(
+      branchSidewalkPatches,
+      new THREE.MeshLambertMaterial({ color: 0x9ca29d }),
+      "city-cross-street-sidewalks",
+      3,
+      true,
+    );
     crossStreetMarkings.name = "city-cross-street-markings";
-    intersectionPads.userData.receiveOnly = true;
-    crossStreetGround.userData.receiveOnly = true;
-    crossStreetArms.userData.receiveOnly = true;
-    crossStreetSidewalks.userData.receiveOnly = true;
     crossStreetMarkings.userData.disableShadows = true;
     crosswalk.userData.disableShadows = true;
     signalLights.userData.disableShadows = true;
-    intersectionPads.instanceMatrix.needsUpdate = true;
-    crossStreetGround.instanceMatrix.needsUpdate = true;
-    crossStreetArms.instanceMatrix.needsUpdate = true;
-    crossStreetSidewalks.instanceMatrix.needsUpdate = true;
     crossStreetMarkings.instanceMatrix.needsUpdate = true;
     crosswalk.instanceMatrix.needsUpdate = true;
     signalPoles.instanceMatrix.needsUpdate = true;
@@ -4190,7 +4382,6 @@ export class WorldScene {
     signalLights.instanceMatrix.needsUpdate = true;
     group.add(
       intersectionPads,
-      crossStreetGround,
       crossStreetArms,
       crossStreetSidewalks,
       crossStreetMarkings,
@@ -4212,17 +4403,30 @@ export class WorldScene {
     };
     const routeBuildingCenter = (
       road: RoadSample,
+      distance: number,
       offset: number,
       height: number,
       frontage: number,
+      depth: number,
     ): THREE.Vector3 => {
-      const foundationEmbed = Math.min(
-        1.8,
-        0.12 + (Math.abs(road.gradePercent) / 100) * (frontage * 0.5 + 1.5),
-      );
+      let foundationY = Number.POSITIVE_INFINITY;
+      for (const alongFactor of [-0.5, 0, 0.5]) {
+        const footprintRoad = this.generator.sample(
+          Math.max(0, distance + frontage * alongFactor),
+        );
+        for (const acrossFactor of [-0.5, 0, 0.5]) {
+          foundationY = Math.min(
+            foundationY,
+            this.terrainElevationAt(
+              footprintRoad,
+              offset + depth * acrossFactor,
+            ),
+          );
+        }
+      }
       return new THREE.Vector3(
         road.x + Math.cos(road.heading) * offset,
-        this.terrainElevationAt(road, offset) + height / 2 - foundationEmbed,
+        foundationY + height / 2 - 0.16,
         road.z + Math.sin(road.heading) * offset,
       );
     };
@@ -4290,7 +4494,14 @@ export class WorldScene {
           road,
           distance,
           side,
-          center: routeBuildingCenter(road, offset, height, frontage),
+          center: routeBuildingCenter(
+            road,
+            distance,
+            offset,
+            height,
+            frontage,
+            depth,
+          ),
           depth,
           frontage,
           height,
@@ -4346,7 +4557,14 @@ export class WorldScene {
           road,
           distance,
           side,
-          center: routeBuildingCenter(road, offset, height, frontage),
+          center: routeBuildingCenter(
+            road,
+            distance,
+            offset,
+            height,
+            frontage,
+            depth,
+          ),
           depth,
           frontage,
           height,
@@ -4856,6 +5074,8 @@ export class WorldScene {
       });
       facadePanels.name = "city-street-level-facades";
       awnings.name = "city-facade-awnings";
+      facadePanels.userData.disableShadows = true;
+      awnings.userData.disableShadows = true;
       facadePanels.instanceMatrix.needsUpdate = true;
       awnings.instanceMatrix.needsUpdate = true;
       group.add(facadePanels, awnings);
@@ -5108,12 +5328,19 @@ export class WorldScene {
         Math.sin(road.heading),
       );
       const plazaCenter = this.roadOffsetPosition(road, civicSide * 25, 0.05);
-      const plaza = new THREE.Mesh(
-        new THREE.BoxGeometry(34, 0.12, 54),
+      const plaza = this.buildTerrainPatches(
+        [
+          {
+            centerDistanceM: civicDistance,
+            lengthM: 54,
+            offsetM: civicSide * 25,
+            widthM: 34,
+            heightOffsetM: 0.04,
+          },
+        ],
         new THREE.MeshLambertMaterial({ color: 0xb8b2a3 }),
+        "city-civic-plaza-surface",
       );
-      plaza.position.copy(plazaCenter);
-      plaza.rotation.y = -road.heading;
       const hall = new THREE.Mesh(
         new THREE.BoxGeometry(15, 9, 29),
         new THREE.MeshStandardMaterial({
@@ -5121,10 +5348,7 @@ export class WorldScene {
           roughness: 0.82,
         }),
       );
-      hall.position
-        .copy(plazaCenter)
-        .addScaledVector(across, civicSide * 15)
-        .setY(plazaCenter.y + 4.55);
+      hall.position.copy(civicHallCenter).setY(civicHallCenter.y + 4.34);
       hall.rotation.y = -road.heading;
       const clockTower = new THREE.Mesh(
         new THREE.BoxGeometry(5.5, 15, 7),
@@ -5197,19 +5421,22 @@ export class WorldScene {
         for (const side of [-1, 1]) {
           const distance =
             chunk.startDistanceM + (side < 0 ? 48 : CHUNK_LENGTH_M - 48);
-          const road = this.generator.sample(distance);
-          const lawn = new THREE.Mesh(
-            new THREE.BoxGeometry(24, 0.12, 64),
+          const lawn = this.buildTerrainPatches(
+            [
+              {
+                centerDistanceM: distance,
+                lengthM: 64,
+                offsetM: side * 22,
+                widthM: 24,
+                heightOffsetM: 0.025,
+              },
+            ],
             lawnMaterial.clone(),
+            "city-park-lawn",
           );
-          lawn.position.set(
-            road.x + Math.cos(road.heading) * side * 22,
-            road.elevationM - 0.08,
-            road.z + Math.sin(road.heading) * side * 22,
-          );
-          lawn.rotation.y = -road.heading;
           group.add(lawn);
         }
+        lawnMaterial.dispose();
       }
       const curbTreeCount = district === "park" ? 18 : 6;
       const blockTreeCount = district === "park" ? 26 : 12;
@@ -6094,12 +6321,17 @@ export class WorldScene {
     this.camera.lookAt(lookAt);
     this.sky.position.copy(this.camera.position);
     const lightDirection = this.lightDirection();
-    this.sun.position.set(
-      x + lightDirection.x * 160,
-      y + lightDirection.y * 160,
-      z + lightDirection.z * 160,
-    );
-    this.sun.target.position.set(x + headingX * 20, y, z + headingZ * 20);
+    const shadowTexelM =
+      (this.sun.shadow.camera.right - this.sun.shadow.camera.left) /
+      this.sun.shadow.mapSize.x;
+    const shadowTargetX =
+      Math.round((x + headingX * 20) / shadowTexelM) * shadowTexelM;
+    const shadowTargetZ =
+      Math.round((z + headingZ * 20) / shadowTexelM) * shadowTexelM;
+    this.sun.target.position.set(shadowTargetX, y, shadowTargetZ);
+    this.sun.position
+      .copy(this.sun.target.position)
+      .addScaledVector(lightDirection, 160);
   }
 
   private setVisualQaDistance(distanceM: number): void {
@@ -6120,6 +6352,8 @@ export class WorldScene {
     this.ensureChunks(this.rideDistanceM);
     this.updateCyclist(sample, this.cadenceRpm, this.speedKph);
     this.updateCamera(10);
+    this.renderer.info.reset();
+    this.renderer.render(this.scene, this.camera);
     window.__INFINIBIKE_DEBUG__ = this.getDiagnostics();
   }
 
