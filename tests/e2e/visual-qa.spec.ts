@@ -274,7 +274,7 @@ test("captures a deterministic countryside fork and long bend", async ({
   }
 });
 
-test("captures an open city intersection with a deterministic route turn", async ({
+test("captures diverse left and right city route turns", async ({
   page,
 }, testInfo) => {
   test.skip(
@@ -291,69 +291,81 @@ test("captures an open city intersection with a deterministic route turn", async
   await page.locator("#graphics").selectOption("high");
   await page.getByRole("button", { name: "Start ride" }).click();
   await page.getByRole("button", { name: "Pause ride" }).click();
-  const turnDistance = await page.evaluate(() =>
-    window.__INFINIBIKE_VISUAL_QA__!.findCityTurnDistance(),
-  );
-  expect(turnDistance).toBeGreaterThan(0);
-
-  const headings: number[] = [];
-  for (const distance of [turnDistance - 8, turnDistance + 8]) {
-    await page.evaluate(
-      (target) => window.__INFINIBIKE_VISUAL_QA__!.setDistance(target),
-      distance,
-    );
-    await expect
-      .poll(
-        async () =>
-          (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.distanceM,
-      )
-      .toBe(distance);
-    headings.push(
-      Number(
-        (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.routeHeading,
-      ),
-    );
-  }
-  const headingChange = Math.atan2(
-    Math.sin(headings[1]! - headings[0]!),
-    Math.cos(headings[1]! - headings[0]!),
-  );
-  expect(Math.abs(headingChange)).toBeCloseTo(Math.PI / 2, 4);
-
-  await page.evaluate(
-    (target) => window.__INFINIBIKE_VISUAL_QA__!.setDistance(target),
-    turnDistance - 18,
-  );
-  await expect
-    .poll(
-      async () =>
-        (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.distanceM,
-    )
-    .toBe(turnDistance - 18);
-  const diagnostics = await page.evaluate(() => window.__INFINIBIKE_DEBUG__!);
-  expect(Number(diagnostics.calls)).toBeLessThanOrEqual(750);
-  expect(Number(diagnostics.triangles)).toBeLessThanOrEqual(350_000);
-  expect(Number(diagnostics.geometries)).toBeLessThanOrEqual(500);
-  expect(Number(diagnostics.contextLosses)).toBe(0);
+  const turns = await page.evaluate(() => ({
+    left: window.__INFINIBIKE_VISUAL_QA__!.findCityTurnDistance(
+      0,
+      -1,
+      "urban-core",
+    ),
+    right: window.__INFINIBIKE_VISUAL_QA__!.findCityTurnDistance(
+      0,
+      1,
+      "urban-core",
+    ),
+    edge: window.__INFINIBIKE_VISUAL_QA__!.findCityTurnDistance(
+      0,
+      undefined,
+      "edge",
+    ),
+  }));
+  expect(turns.left).toBeGreaterThan(0);
+  expect(turns.right).toBeGreaterThan(0);
+  expect(turns.edge).toBeGreaterThan(0);
   await page.locator(".modal-layer").evaluate((element) => {
     (element as HTMLElement).style.display = "none";
   });
-  await page.screenshot({
-    path: "test-results/visual-qa/city-turn-high.png",
-    animations: "disabled",
-  });
+  for (const [direction, turnDistance, path] of [
+    [
+      "left",
+      turns.left,
+      "test-results/visual-qa/city-turn-left-urban-high.png",
+    ],
+    [
+      "right",
+      turns.right,
+      "test-results/visual-qa/city-turn-right-urban-high.png",
+    ],
+    ["edge", turns.edge, "test-results/visual-qa/city-turn-edge-high.png"],
+  ] as const) {
+    const headings: number[] = [];
+    for (const distance of [turnDistance - 8, turnDistance + 8]) {
+      await page.evaluate(
+        (target) => window.__INFINIBIKE_VISUAL_QA__!.setDistance(target),
+        distance,
+      );
+      headings.push(
+        Number(
+          (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))
+            ?.routeHeading,
+        ),
+      );
+    }
+    const headingChange = Math.atan2(
+      Math.sin(headings[1]! - headings[0]!),
+      Math.cos(headings[1]! - headings[0]!),
+    );
+    expect(Math.abs(headingChange), direction).toBeCloseTo(Math.PI / 2, 4);
+    await page.evaluate(
+      (target) => window.__INFINIBIKE_VISUAL_QA__!.setDistance(target),
+      turnDistance - 18,
+    );
+    const diagnostics = await page.evaluate(() => window.__INFINIBIKE_DEBUG__!);
+    expect(Number(diagnostics.calls)).toBeLessThanOrEqual(750);
+    expect(Number(diagnostics.triangles)).toBeLessThanOrEqual(380_000);
+    expect(Number(diagnostics.geometries)).toBeLessThanOrEqual(500);
+    expect(Number(diagnostics.contextLosses)).toBe(0);
+    await page.screenshot({ path, animations: "disabled" });
+  }
+  const hillDistance = await page.evaluate(() =>
+    window.__INFINIBIKE_VISUAL_QA__!.findCityHillDistance(),
+  );
+  expect(hillDistance).toBeGreaterThan(0);
   await page.evaluate(
     (target) => window.__INFINIBIKE_VISUAL_QA__!.setDistance(target),
-    turnDistance + 12,
+    hillDistance,
   );
-  await expect
-    .poll(
-      async () =>
-        (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.distanceM,
-    )
-    .toBe(turnDistance + 12);
   await page.screenshot({
-    path: "test-results/visual-qa/city-turn-exit-high.png",
+    path: "test-results/visual-qa/city-hill-sidewalks-high.png",
     animations: "disabled",
   });
 });

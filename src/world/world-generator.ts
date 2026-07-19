@@ -45,6 +45,22 @@ export function cityIntersectionBranches(
   return roll < 28 ? [-1] : roll < 56 ? [1] : [-1, 1];
 }
 
+export type CityIntersectionContext = "edge" | "neighborhood" | "urban-core";
+
+export function cityIntersectionContext(
+  seed: string,
+  distanceM: number,
+): CityIntersectionContext {
+  const normalizedSeed = seed.trim().toLowerCase() || "open-road";
+  const intersectionIndex = Math.round(
+    (distanceM - ROUTE_CONTROL_LENGTH_M / 2) / ROUTE_CONTROL_LENGTH_M,
+  );
+  const roll =
+    hashString(`${normalizedSeed}:intersection-context:${intersectionIndex}`) %
+    100;
+  return roll < 26 ? "edge" : roll < 66 ? "neighborhood" : "urban-core";
+}
+
 export type PlanarStreetSegment = {
   start: { x: number; z: number };
   end: { x: number; z: number };
@@ -316,6 +332,7 @@ export class WorldGenerator {
     { distanceM: 0, x: 0, z: 0 },
   ];
   private lastCityTurnIndex = -100;
+  private cityTurnCount = 0;
   private countrysideCandidateCount = 0;
   private lastCountrysideEventEndM = 0;
 
@@ -636,14 +653,25 @@ export class WorldGenerator {
       const turnRoll =
         hashString(`${this.seedHash}:${index}:city-route-turn`) % 13;
       const canTurn = index >= 8 && index - this.lastCityTurnIndex >= 8;
-      const direction: -1 | 0 | 1 =
-        canTurn && turnRoll === 0
-          ? hashString(`${this.seedHash}:${index}:city-turn-direction`) % 2 ===
-            0
+      let direction: -1 | 0 | 1 = 0;
+      if (canTurn && turnRoll === 0) {
+        const pairDirection =
+          hashString(
+            `${this.seedHash}:${Math.floor(this.cityTurnCount / 2)}:city-turn-pair`,
+          ) %
+            2 ===
+          0
             ? -1
-            : 1
-          : 0;
-      if (direction !== 0) this.lastCityTurnIndex = index;
+            : 1;
+        direction =
+          this.cityTurnCount % 2 === 0
+            ? pairDirection
+            : pairDirection === -1
+              ? 1
+              : -1;
+        this.cityTurnCount += 1;
+        this.lastCityTurnIndex = index;
+      }
       this.cityIntersections.push({
         distanceM,
         x,

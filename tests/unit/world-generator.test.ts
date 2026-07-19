@@ -3,6 +3,7 @@ import { DEFAULT_ENVIRONMENT } from "../../src/domain/environment";
 import {
   CHUNK_LENGTH_M,
   cityIntersectionBranches,
+  cityIntersectionContext,
   cityIntersectionsForChunk,
   footprintIntersectsStreetSegments,
   WorldGenerator,
@@ -25,6 +26,20 @@ describe("WorldGenerator", () => {
     expect(layouts.some((branches) => branches.length === 2)).toBe(true);
     expect(cityIntersectionBranches(" STREET-GRID ", 1_250)).toEqual(
       cityIntersectionBranches("street-grid", 1_250),
+    );
+  });
+
+  it("varies city intersections from edge-of-town to urban-core contexts", () => {
+    const contexts = Array.from({ length: 80 }, (_, index) =>
+      cityIntersectionContext("street-grid", 50 + index * 100),
+    );
+    expect(new Set(contexts)).toEqual(
+      new Set(["edge", "neighborhood", "urban-core"]),
+    );
+    expect(contexts).toEqual(
+      contexts.map((_, index) =>
+        cityIntersectionContext("street-grid", 50 + index * 100),
+      ),
     );
   });
 
@@ -235,6 +250,12 @@ describe("WorldGenerator", () => {
     expect(turns).toEqual(
       turns.map((turn) => repeat.cityTurnAtIntersection(turn.distanceM)),
     );
+    expect([...new Set(turns.map((turn) => turn.direction))].sort()).toEqual([
+      -1, 1,
+    ]);
+    for (let index = 1; index < turns.length; index += 2) {
+      expect(turns[index]!.direction).toBe(-turns[index - 1]!.direction);
+    }
     for (let index = 1; index < turns.length; index += 1) {
       expect(
         turns[index]!.distanceM - turns[index - 1]!.distanceM,

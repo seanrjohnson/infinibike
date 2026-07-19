@@ -13,12 +13,14 @@ import type { RideSnapshot } from "../domain/ride-model";
 import {
   CHUNK_LENGTH_M,
   ROAD_HALF_WIDTH_M,
+  cityIntersectionContext,
   cityIntersectionBranches,
   cityIntersectionsForChunk,
   footprintIntersectsStreetSegments,
   terrainElevationAt as sampleTerrainElevation,
   WorldGenerator,
   type CityTurnDescriptor,
+  type CityIntersectionContext,
   type CountrysideRouteEventDescriptor,
   type PlanarStreetSegment,
   type RegionWeights,
@@ -300,7 +302,9 @@ export class WorldScene {
         setDistance: (distanceM) => this.setVisualQaDistance(distanceM),
         setGraphics: (preference) => this.setGraphicsPreference(preference),
         findRegionDistance: (region) => this.findRegionDistance(region),
-        findCityTurnDistance: (afterM = 0) => this.findCityTurnDistance(afterM),
+        findCityTurnDistance: (afterM = 0, direction, context) =>
+          this.findCityTurnDistance(afterM, direction, context),
+        findCityHillDistance: () => this.findCityHillDistance(),
         findCountrysideRouteEvent: (kind, afterM = 0, angleDegrees) =>
           this.findCountrysideRouteEvent(kind, afterM, angleDegrees),
         findMovingActor: (kind) => this.findMovingActor(kind),
@@ -1868,6 +1872,91 @@ export class WorldScene {
     );
   }
 
+  private buildRouteSlabs(
+    strips: {
+      startDistanceM: number;
+      endDistanceM: number;
+      offsetM: number;
+      widthM: number;
+      topOffsetM: number;
+      bottomOffsetM: number;
+    }[],
+    material: THREE.Material,
+    name: string,
+    maximumStepM = 3,
+  ): THREE.Mesh {
+    const positions: number[] = [];
+    const indices: number[] = [];
+    for (const strip of strips) {
+      const length = strip.endDistanceM - strip.startDistanceM;
+      if (length <= 0.05) continue;
+      const segmentCount = Math.max(1, Math.ceil(length / maximumStepM));
+      const vertexStart = positions.length / 3;
+      for (let index = 0; index <= segmentCount; index += 1) {
+        const distance = THREE.MathUtils.lerp(
+          strip.startDistanceM,
+          strip.endDistanceM,
+          index / segmentCount,
+        );
+        const road = this.generator.sample(distance);
+        for (const edge of [-1, 1]) {
+          const offset = strip.offsetM + edge * strip.widthM * 0.5;
+          const x = road.x + Math.cos(road.heading) * offset;
+          const z = road.z + Math.sin(road.heading) * offset;
+          positions.push(
+            x,
+            road.elevationM + strip.topOffsetM,
+            z,
+            x,
+            road.elevationM + strip.bottomOffsetM,
+            z,
+          );
+        }
+      }
+      for (let row = 0; row < segmentCount; row += 1) {
+        const base = vertexStart + row * 4;
+        const next = base + 4;
+        indices.push(
+          base,
+          base + 2,
+          next,
+          base + 2,
+          next + 2,
+          next,
+          base + 1,
+          next + 1,
+          base + 3,
+          base + 3,
+          next + 1,
+          next + 3,
+          base,
+          next,
+          base + 1,
+          base + 1,
+          next,
+          next + 1,
+          base + 2,
+          base + 3,
+          next + 2,
+          base + 3,
+          next + 3,
+          next + 2,
+        );
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(positions, 3),
+    );
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const slabs = new THREE.Mesh(geometry, material);
+    slabs.name = name;
+    slabs.userData.receiveOnly = true;
+    return slabs;
+  }
+
   private buildTerrain(
     chunk: WorldChunkDescriptor,
     detail: TerrainDetail,
@@ -1884,7 +1973,7 @@ export class WorldScene {
     const colors: number[] = [];
     const indices: number[] = [];
     const terrainSamples =
-      detail === "near"
+      detail === "near" || this.settings.landscape === "city"
         ? chunk.samples
         : chunk.samples.filter(
             (_, index) => index % 4 === 0 || index === chunk.samples.length - 1,
@@ -3197,6 +3286,7 @@ export class WorldScene {
       distance: number;
       branches: StreetSide[];
       fourWay: boolean;
+      context: CityIntersectionContext;
       turn?: CityTurnDescriptor;
     };
     const intersectionLayout = (distance: number): IntersectionLayout => {
@@ -3205,15 +3295,27 @@ export class WorldScene {
         this.settings.seed,
         distance,
       );
-      const fourWay = generatedBranches.length === 2;
+      const context = cityIntersectionContext(this.settings.seed, distance);
+      const fourWay = turn
+        ? context !== "edge" || generatedBranches.length === 2
+        : generatedBranches.length === 2;
       return {
         distance,
         branches: turn ? [-1, 1] : generatedBranches,
         fourWay,
+        context,
         turn,
       };
     };
     const intersectionLayouts = crossingDistances.map(intersectionLayout);
+    const intersectionHalfWidth = (layout: IntersectionLayout): number =>
+      layout.turn
+        ? layout.context === "edge"
+          ? 13
+          : layout.context === "neighborhood"
+            ? 11.5
+            : 10.5
+        : 5.1;
     const sidewalkIntersectionLayouts = [
       ...intersectionLayouts,
       ...cityIntersectionsForChunk(chunk.index + 1)
@@ -3253,14 +3355,21 @@ export class WorldScene {
       start: { x: previousClearanceRoad.x, z: previousClearanceRoad.z },
       end: { x: finalClearanceRoad.x, z: finalClearanceRoad.z },
     });
-    const turnClearancePoints: PlanarStreetSegment[] = [];
+    const edgeTurnClearancePoints: PlanarStreetSegment[] = [];
+    const builtTurnClearancePoints: PlanarStreetSegment[] = [];
     for (const layout of sidewalkIntersectionLayouts) {
       const crossingRoad = this.generator.sample(layout.distance);
       const center = {
         x: layout.turn?.x ?? crossingRoad.x,
         z: layout.turn?.z ?? crossingRoad.z,
       };
-      if (layout.turn) turnClearancePoints.push({ start: center, end: center });
+      if (layout.turn) {
+        const clearancePoints =
+          layout.context === "edge"
+            ? edgeTurnClearancePoints
+            : builtTurnClearancePoints;
+        clearancePoints.push({ start: center, end: center });
+      }
       for (const heading of branchHeadingsForLayout(layout, crossingRoad)) {
         streetClearanceSegments.push({
           start: center,
@@ -3290,85 +3399,85 @@ export class WorldScene {
       ) &&
       !footprintIntersectsStreetSegments(
         civicFootprint,
-        turnClearancePoints,
+        edgeTurnClearancePoints,
         18,
+      ) &&
+      !footprintIntersectsStreetSegments(
+        civicFootprint,
+        builtTurnClearancePoints,
+        10,
       );
-    type SidewalkPiece = {
+    type SidewalkRange = {
       side: StreetSide;
-      distance: number;
-      length: number;
+      startDistanceM: number;
+      endDistanceM: number;
     };
-    const sidewalkPieces: SidewalkPiece[] = [];
-    const maxSidewalkPieceLength = 6.25;
+    const sidewalkRanges: SidewalkRange[] = [];
     for (const side of [-1, 1] as const) {
       let cursor = chunk.startDistanceM;
       const addRange = (start: number, end: number): void => {
-        const length = end - start;
-        if (length <= 0.08) return;
-        const pieceCount = Math.ceil(length / maxSidewalkPieceLength);
-        const pieceLength = length / pieceCount;
-        for (let index = 0; index < pieceCount; index += 1) {
-          sidewalkPieces.push({
-            side,
-            distance: start + (index + 0.5) * pieceLength,
-            length: pieceLength,
-          });
-        }
+        if (end - start <= 0.08) return;
+        sidewalkRanges.push({ side, startDistanceM: start, endDistanceM: end });
       };
       for (const layout of sidewalkIntersectionLayouts) {
         if (!layout.branches.includes(side)) continue;
-        const intersectionHalfWidth = layout.turn ? 13 : 5.1;
+        const halfWidth = intersectionHalfWidth(layout);
         const gapStart = Math.max(
           chunk.startDistanceM,
-          layout.distance - intersectionHalfWidth,
+          layout.distance - halfWidth,
         );
         const gapEnd = Math.min(
           chunk.endDistanceM,
-          layout.distance + intersectionHalfWidth,
+          layout.distance + halfWidth,
         );
         addRange(cursor, gapStart);
         cursor = Math.max(cursor, gapEnd);
       }
       addRange(cursor, chunk.endDistanceM);
     }
-    const sidewalkMaterial = new THREE.MeshLambertMaterial({ color: 0x9ca29d });
-    const sidewalks = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(3.6, 0.18, 1),
-      sidewalkMaterial,
-      sidewalkPieces.length,
+    const sidewalks = this.buildRouteSlabs(
+      sidewalkRanges.map((range) => ({
+        startDistanceM: range.startDistanceM,
+        endDistanceM: range.endDistanceM,
+        offsetM: range.side * 5.15,
+        widthM: 3.6,
+        topOffsetM: 0.13,
+        bottomOffsetM: -0.05,
+      })),
+      new THREE.MeshLambertMaterial({ color: 0x9ca29d }),
+      "city-sidewalks",
+      2.5,
     );
-    sidewalkPieces.forEach((piece, index) => {
-      const road = this.generator.sample(piece.distance);
-      rotation.setFromEuler(
-        euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
-      );
-      const offset = piece.side * 5.15;
-      matrix.compose(
-        new THREE.Vector3(
-          road.x + Math.cos(road.heading) * offset,
-          road.elevationM + 0.04,
-          road.z + Math.sin(road.heading) * offset,
-        ),
-        rotation,
-        new THREE.Vector3(1, 1, piece.length + 0.12),
-      );
-      sidewalks.setMatrixAt(index, matrix);
-    });
-    sidewalks.name = "city-sidewalks";
-    sidewalks.userData.receiveOnly = true;
-    sidewalks.instanceMatrix.needsUpdate = true;
     group.add(sidewalks);
 
     const parallelStreetOffset = 56;
-    const blockStreets = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(7.6, 0.07, CHUNK_LENGTH_M / segmentCount + 0.5),
+    const parallelStreetRange = (offsetM: number, widthM: number) => ({
+      startDistanceM: chunk.startDistanceM,
+      endDistanceM: chunk.endDistanceM,
+      offsetM,
+      widthM,
+      topOffsetM: -0.165,
+      bottomOffsetM: -0.235,
+    });
+    const blockStreets = this.buildRouteSlabs(
+      ([-1, 1] as const).map((side) =>
+        parallelStreetRange(side * parallelStreetOffset, 7.6),
+      ),
       new THREE.MeshStandardMaterial({ color: 0x505553, roughness: 0.96 }),
-      segmentCount * 2,
+      "city-parallel-streets",
+      4,
     );
-    const blockSidewalks = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(2.4, 0.14, CHUNK_LENGTH_M / segmentCount + 0.4),
-      sidewalkMaterial.clone(),
-      segmentCount * 4,
+    const blockSidewalks = this.buildRouteSlabs(
+      ([-1, 1] as const).flatMap((side) =>
+        ([-1, 1] as const).map((edge) => ({
+          ...parallelStreetRange(side * parallelStreetOffset + edge * 5, 2.4),
+          topOffsetM: -0.05,
+          bottomOffsetM: -0.19,
+        })),
+      ),
+      new THREE.MeshLambertMaterial({ color: 0x9ca29d }),
+      "city-parallel-sidewalks",
+      3,
     );
     const blockMarkings = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.09, 0.025, 3.4),
@@ -3393,36 +3502,15 @@ export class WorldScene {
           road.elevationM - 0.2,
           road.z,
         ).addScaledVector(across, side * parallelStreetOffset);
-        matrix.compose(streetCenter, rotation, new THREE.Vector3(1, 1, 1));
-        blockStreets.setMatrixAt(index * 2 + sideIndex, matrix);
         matrix.compose(
           streetCenter.clone().setY(streetCenter.y + 0.065),
           rotation,
           new THREE.Vector3(1, 1, 1),
         );
         blockMarkings.setMatrixAt(index * 2 + sideIndex, matrix);
-        for (const [edgeIndex, edge] of [-1, 1].entries()) {
-          matrix.compose(
-            streetCenter
-              .clone()
-              .addScaledVector(across, edge * 5)
-              .setY(streetCenter.y + 0.08),
-            rotation,
-            new THREE.Vector3(1, 1, 1),
-          );
-          blockSidewalks.setMatrixAt(
-            index * 4 + sideIndex * 2 + edgeIndex,
-            matrix,
-          );
-        }
       }
     }
-    blockStreets.name = "city-parallel-streets";
-    blockStreets.userData.receiveOnly = true;
-    blockSidewalks.userData.receiveOnly = true;
     blockMarkings.userData.disableShadows = true;
-    blockStreets.instanceMatrix.needsUpdate = true;
-    blockSidewalks.instanceMatrix.needsUpdate = true;
     blockMarkings.instanceMatrix.needsUpdate = true;
     group.add(blockStreets, blockSidewalks, blockMarkings);
 
@@ -3545,7 +3633,11 @@ export class WorldScene {
       matrix.compose(
         intersectionCenter.clone().setY(crossingRoad.elevationM - 0.01),
         rotation,
-        new THREE.Vector3(layout.turn ? 26 : 17, 1, layout.turn ? 26 : 17),
+        new THREE.Vector3(
+          layout.turn ? intersectionHalfWidth(layout) * 2 : 17,
+          1,
+          layout.turn ? intersectionHalfWidth(layout) * 2 : 17,
+        ),
       );
       intersectionPads.setMatrixAt(crossingIndex, matrix);
 
@@ -3581,7 +3673,9 @@ export class WorldScene {
       for (let index = 0; index < 12; index += 1) {
         const approach = index < 6 ? -1 : 1;
         const stripe = index % 6;
-        const crossingInset = layout.turn ? 10.5 : 4.65;
+        const crossingInset = layout.turn
+          ? intersectionHalfWidth(layout) - 2.5
+          : 4.65;
         const distance =
           crossingDistance + approach * (crossingInset + stripe * 0.56);
         const road = this.generator.sample(distance);
@@ -3675,6 +3769,22 @@ export class WorldScene {
       height: number;
       color: THREE.Color;
     };
+    const routeBuildingCenter = (
+      road: RoadSample,
+      offset: number,
+      height: number,
+      frontage: number,
+    ): THREE.Vector3 => {
+      const foundationEmbed = Math.min(
+        1.8,
+        0.12 + (Math.abs(road.gradePercent) / 100) * (frontage * 0.5 + 1.5),
+      );
+      return new THREE.Vector3(
+        road.x + Math.cos(road.heading) * offset,
+        this.terrainElevationAt(road, offset) + height / 2 - foundationEmbed,
+        road.z + Math.sin(road.heading) * offset,
+      );
+    };
     const districtDensity =
       district === "park"
         ? 0.28
@@ -3735,16 +3845,11 @@ export class WorldScene {
                 ? 14 + random() * 19
                 : 7 + random() * 12;
         const offset = side * (10.5 + depth / 2 + random() * 2.5);
-        const baseY = this.terrainElevationAt(road, offset);
         return {
           road,
           distance,
           side,
-          center: new THREE.Vector3(
-            road.x + Math.cos(road.heading) * offset,
-            baseY + height / 2,
-            road.z + Math.sin(road.heading) * offset,
-          ),
+          center: routeBuildingCenter(road, offset, height, frontage),
           depth,
           frontage,
           height,
@@ -3796,16 +3901,11 @@ export class WorldScene {
           (band === 0
             ? 31 + depth / 2 + rearRandom() * 5
             : 72 + depth / 2 + rearRandom() * 12);
-        const baseY = this.terrainElevationAt(road, offset);
         return {
           road,
           distance,
           side,
-          center: new THREE.Vector3(
-            road.x + Math.cos(road.heading) * offset,
-            baseY + height / 2,
-            road.z + Math.sin(road.heading) * offset,
-          ),
+          center: routeBuildingCenter(road, offset, height, frontage),
           depth,
           frontage,
           height,
@@ -3815,7 +3915,88 @@ export class WorldScene {
         };
       },
     );
-    const buildings = [...frontageBuildings, ...rearBuildings].filter(
+    const branchRandom = seededRandom(chunk.scenerySeed ^ 0xb12d1);
+    const branchBuildings = intersectionLayouts.flatMap((layout) => {
+      if (!layout.turn || layout.context === "edge") return [];
+      const crossingRoad = this.generator.sample(layout.distance);
+      const centerX = layout.turn.x;
+      const centerZ = layout.turn.z;
+      const buildingsPerSide =
+        layout.context === "urban-core"
+          ? detail === "near"
+            ? 4
+            : 3
+          : detail === "near"
+            ? 3
+            : 2;
+      return branchHeadingsForLayout(layout, crossingRoad).flatMap(
+        (branchHeading) => {
+          const forward = new THREE.Vector3(
+            Math.sin(branchHeading),
+            0,
+            -Math.cos(branchHeading),
+          );
+          const across = new THREE.Vector3(
+            Math.cos(branchHeading),
+            0,
+            Math.sin(branchHeading),
+          );
+          return Array.from(
+            { length: buildingsPerSide * 2 },
+            (_, index): BuildingPlacement => {
+              const side = index % 2 === 0 ? -1 : 1;
+              const row = Math.floor(index / 2);
+              const along = 31 + row * 24 + branchRandom() * 3;
+              const depth = 7.5 + branchRandom() * 5;
+              const frontage = 8.5 + branchRandom() * 6;
+              const height =
+                layout.context === "urban-core"
+                  ? 12 + branchRandom() * 22
+                  : 7 + branchRandom() * 10;
+              const offset = side * (9.5 + depth / 2 + branchRandom() * 1.5);
+              const elevationM =
+                crossingRoad.elevationM +
+                (crossingRoad.gradePercent / 100) * along;
+              const branchRoad: RoadSample = {
+                ...crossingRoad,
+                distanceM: layout.distance,
+                x: centerX + forward.x * along,
+                z: centerZ + forward.z * along,
+                elevationM,
+                heading: branchHeading,
+              };
+              const foundationEmbed = Math.min(
+                1.8,
+                0.12 +
+                  (Math.abs(branchRoad.gradePercent) / 100) *
+                    (frontage * 0.5 + 1.5),
+              );
+              return {
+                road: branchRoad,
+                distance: layout.distance,
+                side,
+                center: new THREE.Vector3(
+                  branchRoad.x,
+                  elevationM - 0.08 + height / 2 - foundationEmbed,
+                  branchRoad.z,
+                ).addScaledVector(across, offset),
+                depth,
+                frontage,
+                height,
+                color: new THREE.Color(
+                  colors[Math.floor(branchRandom() * colors.length)]!,
+                ).offsetHSL(
+                  0,
+                  -0.02,
+                  layout.context === "urban-core" ? 0.015 : -0.025,
+                ),
+              };
+            },
+          );
+        },
+      );
+    });
+    const routeBuildings = [...frontageBuildings, ...rearBuildings].filter(
       (building) => {
         if (
           hasCivicPlaza &&
@@ -3836,10 +4017,48 @@ export class WorldScene {
             streetClearanceSegments,
             cityStreetClearanceM,
           ) &&
-          !footprintIntersectsStreetSegments(footprint, turnClearancePoints, 18)
+          !footprintIntersectsStreetSegments(
+            footprint,
+            edgeTurnClearancePoints,
+            18,
+          ) &&
+          !footprintIntersectsStreetSegments(
+            footprint,
+            builtTurnClearancePoints,
+            10,
+          )
         );
       },
     );
+    const buildings = [
+      ...routeBuildings,
+      ...branchBuildings.filter((building) => {
+        const footprint = {
+          x: building.center.x,
+          z: building.center.z,
+          heading: building.road.heading,
+          halfAcross: building.depth / 2,
+          halfAlong: building.frontage / 2,
+        };
+        return (
+          !footprintIntersectsStreetSegments(
+            footprint,
+            streetClearanceSegments,
+            cityStreetClearanceM,
+          ) &&
+          !footprintIntersectsStreetSegments(
+            footprint,
+            edgeTurnClearancePoints,
+            18,
+          ) &&
+          !footprintIntersectsStreetSegments(
+            footprint,
+            builtTurnClearancePoints,
+            10,
+          )
+        );
+      }),
+    ];
     const bodies = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshStandardMaterial({
@@ -5451,13 +5670,36 @@ export class WorldScene {
     return bestDistance;
   }
 
-  private findCityTurnDistance(afterM: number): number {
+  private findCityTurnDistance(
+    afterM: number,
+    direction?: -1 | 1,
+    context?: CityIntersectionContext,
+  ): number {
     const firstIndex = Math.max(0, Math.ceil((afterM - 50) / 100));
     for (let index = firstIndex; index < firstIndex + 500; index += 1) {
       const distance = 50 + index * 100;
-      if (this.generator.cityTurnAtIntersection(distance)) return distance;
+      const turn = this.generator.cityTurnAtIntersection(distance);
+      if (
+        turn &&
+        (direction === undefined || turn.direction === direction) &&
+        (context === undefined ||
+          cityIntersectionContext(this.settings.seed, distance) === context)
+      )
+        return distance;
     }
     return -1;
+  }
+
+  private findCityHillDistance(): number {
+    let bestDistance = 0;
+    let steepestGrade = 0;
+    for (let distance = 100; distance <= 40_000; distance += 25) {
+      const grade = Math.abs(this.generator.sample(distance).gradePercent);
+      if (grade <= steepestGrade) continue;
+      steepestGrade = grade;
+      bestDistance = distance;
+    }
+    return bestDistance;
   }
 
   private findCountrysideRouteEvent(
@@ -5524,7 +5766,12 @@ declare global {
       setDistance: (distanceM: number) => void;
       setGraphics: (preference: GraphicsPreference) => void;
       findRegionDistance: (region: keyof RegionWeights) => number;
-      findCityTurnDistance: (afterM?: number) => number;
+      findCityTurnDistance: (
+        afterM?: number,
+        direction?: -1 | 1,
+        context?: CityIntersectionContext,
+      ) => number;
+      findCityHillDistance: () => number;
       findCountrysideRouteEvent: (
         kind: "fork" | "bend",
         afterM?: number,
