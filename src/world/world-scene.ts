@@ -1,8 +1,4 @@
 import * as THREE from "three";
-import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
-import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import type {
   EnvironmentSettings,
   GraphicsPreference,
@@ -80,7 +76,8 @@ type MovingActor = {
   speedMps: number;
   side: -1 | 1;
   phase: number;
-  elevated?: "fence" | "powerline";
+  elevated?: "ground" | "powerline";
+  flockBehavior?: "cohere" | "disperse";
 };
 type CloudSpec = {
   distanceM: number;
@@ -103,7 +100,7 @@ const QUALITY = {
 } as const;
 const MAX_HIGH_RENDER_PIXELS = 8_000_000;
 const COUNTRYSIDE_UNUSED_BRANCH_LENGTH_M = 900;
-const COUNTRYSIDE_FORK_MARKING_GAP_M = 24;
+const COUNTRYSIDE_FORK_MARKING_GAP_M = 42;
 
 const LIGHT_DIRECTIONS = {
   dawn: new THREE.Vector3(-0.72, 0.38, -0.42).normalize(),
@@ -172,8 +169,6 @@ function markNoShadows(root: THREE.Object3D): void {
 
 export class WorldScene {
   private readonly renderer: THREE.WebGLRenderer;
-  private composer?: EffectComposer;
-  private bloomPass?: UnrealBloomPass;
   private readonly scene = new THREE.Scene();
   private readonly skyMaterial: THREE.ShaderMaterial;
   private readonly sky: THREE.Mesh;
@@ -206,6 +201,7 @@ export class WorldScene {
   private originZ = 0;
   private originElevation = 0;
   private rideDistanceM = 0;
+  private visualQaDistanceOverride?: number;
   private elapsed = 0;
   private lastFrame = performance.now();
   private frameSamples: number[] = [];
@@ -340,6 +336,7 @@ export class WorldScene {
     this.originZ = 0;
     this.originElevation = 0;
     this.rideDistanceM = 0;
+    this.visualQaDistanceOverride = undefined;
     this.clearChunks();
     if (this.startApron) {
       this.worldRoot.remove(this.startApron);
@@ -359,7 +356,7 @@ export class WorldScene {
   }
 
   updateRide(snapshot: RideSnapshot): RoadSample {
-    this.rideDistanceM = snapshot.distanceM;
+    this.rideDistanceM = this.visualQaDistanceOverride ?? snapshot.distanceM;
     if (this.rideDistanceM - this.originDistanceM >= 2_000) this.rebase();
     const sample = this.generator.sample(this.rideDistanceM);
     if (this.settings.landscape === "countryside")
@@ -411,6 +408,8 @@ export class WorldScene {
 
   getDiagnostics(): Record<string, number | string> {
     this.renderer.getDrawingBufferSize(this.drawingBufferSize);
+    const viewport = this.renderer.getViewport(new THREE.Vector4());
+    const scissor = this.renderer.getScissor(new THREE.Vector4());
     const currentRoad = this.generator.sample(this.rideDistanceM);
     const nearChunks = [...this.chunks.values()].filter(
       ({ detail }) => detail === "near",
@@ -427,11 +426,22 @@ export class WorldScene {
       geometries: this.renderer.info.memory.geometries,
       textures: this.renderer.info.memory.textures,
       quality: this.quality,
-      postProcessing: this.quality === "high" ? "subtle-bloom" : "off",
+      postProcessing: "off",
       renderWidth: this.drawingBufferSize.x,
       renderHeight: this.drawingBufferSize.y,
-      postWidth: this.composer?.readBuffer.width ?? 0,
-      postHeight: this.composer?.readBuffer.height ?? 0,
+      contextWidth: this.renderer.getContext().drawingBufferWidth,
+      contextHeight: this.renderer.getContext().drawingBufferHeight,
+      viewportX: viewport.x,
+      viewportY: viewport.y,
+      viewportWidth: viewport.z,
+      viewportHeight: viewport.w,
+      scissorX: scissor.x,
+      scissorY: scissor.y,
+      scissorWidth: scissor.z,
+      scissorHeight: scissor.w,
+      scissorTest: this.renderer.getScissorTest() ? "on" : "off",
+      postWidth: 0,
+      postHeight: 0,
       effectivePixelRatio:
         this.drawingBufferSize.x /
         Math.max(1, this.canvas.clientWidth || window.innerWidth),
@@ -448,6 +458,14 @@ export class WorldScene {
       movingActors: this.movingActors.length,
       visibleMovingActors: this.movingActors.filter(
         ({ object }) => object.visible,
+      ).length,
+      cohesiveTakeoffFlocks: this.movingActors.filter(
+        ({ kind, flockBehavior }) =>
+          kind === "takeoff-flock" && flockBehavior === "cohere",
+      ).length,
+      dispersingTakeoffFlocks: this.movingActors.filter(
+        ({ kind, flockBehavior }) =>
+          kind === "takeoff-flock" && flockBehavior === "disperse",
       ).length,
       landscape: this.settings.landscape,
       urbanChunks: this.settings.landscape === "city" ? this.chunks.size : 0,
@@ -469,12 +487,11 @@ export class WorldScene {
     if (!this.realtime && now - this.lastIdleRender < 250) return;
     this.lastIdleRender = now;
     this.animateWeather(dt);
-    this.animateMovingScenery(dt);
     this.animateCyclist(dt);
     this.updateCamera(dt);
+    this.animateMovingScenery(dt);
     this.renderer.info.reset();
-    if (this.quality === "high" && this.composer) this.composer.render(dt);
-    else this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, this.camera);
     this.trackPerformance(dt);
     window.__INFINIBIKE_DEBUG__ = this.getDiagnostics();
   };
@@ -485,7 +502,6 @@ export class WorldScene {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
-    this.composer?.setSize(width, height);
     if (this.settings.graphics === "automatic") {
       const resolved = this.resolveQuality("automatic");
       if (resolved !== this.quality) {
@@ -493,8 +509,6 @@ export class WorldScene {
         return;
       }
     }
-    if (this.quality === "high" && this.composer)
-      this.applyPostProcessingPixelRatio(width, height);
   };
 
   private readonly scheduleResize = (): void => {
@@ -524,17 +538,6 @@ export class WorldScene {
     this.renderer.setPixelRatio(
       Math.min(window.devicePixelRatio, quality.pixelRatio),
     );
-    if (level === "high") {
-      this.ensurePostProcessing();
-      const width = Math.max(1, this.canvas.clientWidth || window.innerWidth);
-      const height = Math.max(
-        1,
-        this.canvas.clientHeight || window.innerHeight,
-      );
-      this.applyPostProcessingPixelRatio(width, height);
-    } else {
-      this.disposePostProcessing();
-    }
     this.renderer.shadowMap.enabled = quality.shadows;
     this.sun.castShadow = quality.shadows;
     if (this.startApron) setShadow(this.startApron, quality.shadows);
@@ -548,45 +551,6 @@ export class WorldScene {
       this.chunks.clear();
       this.ensureChunks(this.rideDistanceM);
     }
-  }
-
-  private applyPostProcessingPixelRatio(width: number, height: number): void {
-    const pixelBudgetRatio = Math.sqrt(
-      MAX_HIGH_RENDER_PIXELS / (width * height),
-    );
-    this.composer?.setPixelRatio(
-      Math.min(
-        window.devicePixelRatio,
-        QUALITY.high.pixelRatio,
-        1.5,
-        pixelBudgetRatio,
-      ),
-    );
-  }
-
-  private ensurePostProcessing(): void {
-    if (this.composer) return;
-    this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(1, 1),
-      0.14,
-      0.32,
-      0.86,
-    );
-    this.composer.addPass(this.bloomPass);
-    this.composer.addPass(new OutputPass());
-    this.composer.setSize(
-      Math.max(1, this.canvas.clientWidth || window.innerWidth),
-      Math.max(1, this.canvas.clientHeight || window.innerHeight),
-    );
-  }
-
-  private disposePostProcessing(): void {
-    this.composer?.passes.forEach((pass) => pass.dispose());
-    this.composer?.dispose();
-    this.bloomPass = undefined;
-    this.composer = undefined;
   }
 
   private trackPerformance(dt: number): void {
@@ -918,6 +882,7 @@ export class WorldScene {
       side: -1 | 1,
       phase = random() * Math.PI * 2,
       elevated?: MovingActor["elevated"],
+      flockBehavior?: MovingActor["flockBehavior"],
     ): void => {
       const object = this.createActorModel(kind, random);
       object.name = `moving-${kind}`;
@@ -932,6 +897,7 @@ export class WorldScene {
         side,
         phase,
         elevated,
+        flockBehavior,
       });
     };
 
@@ -987,15 +953,18 @@ export class WorldScene {
           4 + random() * 3,
           index % 2 === 0 ? -1 : 1,
         );
+      }
+      for (let index = 0; index < 4; index += 1) {
         add(
           "takeoff-flock",
-          700 + index * 920 + random() * 260,
-          2_100 + random() * 700,
+          620 + index * 510 + random() * 190,
+          3_000 + random() * 900,
           1,
           5,
           index % 2 === 0 ? 1 : -1,
           undefined,
-          random() < 0.5 ? "powerline" : "fence",
+          index < 2 ? "powerline" : "ground",
+          index % 2 === 0 ? "cohere" : "disperse",
         );
       }
     }
@@ -1026,7 +995,7 @@ export class WorldScene {
     random: () => number,
   ): THREE.Group {
     if (kind === "sky-birds" || kind === "takeoff-flock")
-      return this.createBirdFlock(kind === "sky-birds" ? 7 : 11);
+      return this.createBirdFlock(kind === "sky-birds" ? 7 : 11, random);
     const group = new THREE.Group();
     const lambert = (color: number): THREE.MeshLambertMaterial =>
       new THREE.MeshLambertMaterial({ color });
@@ -1187,7 +1156,7 @@ export class WorldScene {
     return group;
   }
 
-  private createBirdFlock(count: number): THREE.Group {
+  private createBirdFlock(count: number, random: () => number): THREE.Group {
     const group = new THREE.Group();
     const material = new THREE.MeshBasicMaterial({
       color: 0x263331,
@@ -1200,6 +1169,11 @@ export class WorldScene {
         (index % 3) * 0.55,
         Math.floor(index / 4) * 1.7,
       );
+      bird.userData.restPosition = bird.position.clone();
+      bird.userData.departureAcross = (random() - 0.5) * 2;
+      bird.userData.departureAlong = (random() - 0.5) * 2;
+      bird.userData.departureLift = 0.35 + random() * 0.85;
+      bird.userData.departurePhase = random() * Math.PI * 2;
       for (const side of [-1, 1]) {
         const wing = new THREE.Mesh(
           new THREE.BoxGeometry(0.82, 0.035, 0.18),
@@ -1271,6 +1245,7 @@ export class WorldScene {
       );
       this.animateActorLimbs(actor, 5.5);
     }
+    this.hideActorIfItIntersectsCamera(actor.object);
   }
 
   private positionCountrysideActor(
@@ -1306,8 +1281,12 @@ export class WorldScene {
     );
     actor.object.rotation.y =
       -road.heading + (actor.direction < 0 ? Math.PI : 0);
-    if (flying) this.animateBirdWings(actor.object, 7.5, actor.phase);
-    else this.animateActorLimbs(actor, actor.kind === "dinosaur" ? 2.8 : 5);
+    if (flying) {
+      this.animateBirdWings(actor.object, 7.5, actor.phase);
+    } else {
+      this.animateActorLimbs(actor, actor.kind === "dinosaur" ? 2.8 : 5);
+    }
+    this.hideActorIfItIntersectsCamera(actor.object);
   }
 
   private positionTakeoffFlock(
@@ -1323,14 +1302,42 @@ export class WorldScene {
     const startOffset = actor.elevated === "powerline" ? 12.5 : 5.2;
     const offset = actor.side * (startOffset + takeoff * 62);
     const ground = this.terrainElevationAt(road, offset);
-    const startHeight = actor.elevated === "powerline" ? 7.2 : 1.55;
+    const startHeight = actor.elevated === "powerline" ? 7.2 : 0.16;
     actor.object.position.set(
       road.x - this.originX + Math.cos(road.heading) * offset,
       ground - this.originElevation + startHeight + takeoff * 24,
       road.z - this.originZ + Math.sin(road.heading) * offset,
     );
     actor.object.rotation.y = -road.heading + actor.side * 0.55;
+    const departure = THREE.MathUtils.smoothstep(takeoff, 0.18, 1);
+    for (const bird of actor.object.children) {
+      const rest = bird.userData.restPosition as THREE.Vector3 | undefined;
+      if (!rest) continue;
+      const phase = Number(bird.userData.departurePhase ?? 0);
+      if (actor.flockBehavior === "disperse") {
+        bird.position.set(
+          rest.x + Number(bird.userData.departureAcross ?? 0) * departure * 14,
+          rest.y + Number(bird.userData.departureLift ?? 0) * departure * 7,
+          rest.z + Number(bird.userData.departureAlong ?? 0) * departure * 16,
+        );
+      } else {
+        bird.position.set(
+          rest.x * (1 - departure * 0.16) +
+            Math.sin(this.elapsed + phase) * 0.2,
+          rest.y + Math.sin(this.elapsed * 1.4 + phase) * 0.22,
+          rest.z * (1 - departure * 0.12),
+        );
+      }
+    }
     this.animateBirdWings(actor.object, 10, actor.phase);
+    this.hideActorIfItIntersectsCamera(actor.object);
+  }
+
+  private hideActorIfItIntersectsCamera(actor: THREE.Group): void {
+    actor.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(actor);
+    if (bounds.distanceToPoint(this.camera.position) < 3.5)
+      actor.visible = false;
   }
 
   private positionAircraft(
@@ -1360,6 +1367,7 @@ export class WorldScene {
       if (object.name === "rotor") object.rotation.y += dt * 18;
       if (object.name === "tail-rotor") object.rotation.z += dt * 22;
     });
+    this.hideActorIfItIntersectsCamera(actor.object);
   }
 
   private animateActorLimbs(actor: MovingActor, frequency: number): void {
@@ -1565,9 +1573,26 @@ export class WorldScene {
     const matrix = new THREE.Matrix4();
     const rotation = new THREE.Quaternion();
     const euler = new THREE.Euler();
-    const forkStarts = chunk.routeEvents
-      .filter((event) => event.kind === "fork")
-      .map((event) => event.startDistanceM);
+    const forkStarts = new Set<number>();
+    for (
+      let index = Math.max(0, chunk.index - 1);
+      index <= chunk.index + 1;
+      index += 1
+    ) {
+      for (const event of this.generator.countrysideRouteEventsForChunk(
+        index,
+      )) {
+        if (
+          event.kind === "fork" &&
+          event.startDistanceM >=
+            chunk.startDistanceM - COUNTRYSIDE_FORK_MARKING_GAP_M &&
+          event.startDistanceM <=
+            chunk.endDistanceM + COUNTRYSIDE_FORK_MARKING_GAP_M
+        )
+          forkStarts.add(event.startDistanceM);
+      }
+    }
+    const forkStartDistances = [...forkStarts];
     for (let index = 0; index < count; index += 1) {
       const distance =
         chunk.startDistanceM + ((index + 0.5) / count) * CHUNK_LENGTH_M;
@@ -1579,7 +1604,7 @@ export class WorldScene {
         new THREE.Vector3(sample.x, sample.elevationM + 0.095, sample.z),
         rotation,
         new THREE.Vector3(
-          forkStarts.some(
+          forkStartDistances.some(
             (forkDistance) =>
               Math.abs(distance - forkDistance) <
               COUNTRYSIDE_FORK_MARKING_GAP_M,
@@ -1621,7 +1646,7 @@ export class WorldScene {
           (chunk.samples[row]!.distanceM + chunk.samples[row + 1]!.distanceM) /
           2;
         if (
-          forkStarts.some(
+          forkStartDistances.some(
             (forkDistance) =>
               Math.abs(midpointDistance - forkDistance) <
               COUNTRYSIDE_FORK_MARKING_GAP_M,
@@ -1720,11 +1745,22 @@ export class WorldScene {
           event.startDistanceM,
           event.startDistanceM + branchLength + 80,
         );
-        const y =
+        const sampledY =
           index === 0
             ? startRoad.elevationM + 0.06
             : this.terrainElevationAt(projection.road, projection.offset) +
               0.14;
+        const previousPoint = points.at(-1);
+        const maximumElevationChange = previousPoint
+          ? Math.max(0.2, (distance - previousPoint.distance) * 0.14)
+          : 0;
+        const y = previousPoint
+          ? THREE.MathUtils.clamp(
+              sampledY,
+              previousPoint.y - maximumElevationChange,
+              previousPoint.y + maximumElevationChange,
+            )
+          : sampledY;
         points.push({
           x: centerX,
           y,
@@ -1743,10 +1779,12 @@ export class WorldScene {
       const terrainPositions: number[] = [];
       const terrainColors: number[] = [];
       const terrainIndices: number[] = [];
-      points.forEach((point) => {
+      const terrainElevations: number[][] = [];
+      points.forEach((point, rowIndex) => {
         const acrossX = Math.cos(point.heading);
         const acrossZ = Math.sin(point.heading);
-        for (const offset of terrainOffsets) {
+        const rowElevations: number[] = [];
+        for (const [columnIndex, offset] of terrainOffsets.entries()) {
           const x = point.x + acrossX * offset;
           const z = point.z + acrossZ * offset;
           const projection = this.projectWorldPointToRoute(
@@ -1756,10 +1794,37 @@ export class WorldScene {
             event.startDistanceM,
             event.startDistanceM + branchLength + 120,
           );
-          const elevation = this.terrainElevationAt(
+          const sampledElevation = this.terrainElevationAt(
             projection.road,
             projection.offset,
           );
+          const previousRowElevation =
+            rowIndex > 0
+              ? terrainElevations[rowIndex - 1]![columnIndex]
+              : undefined;
+          const alongLimit =
+            rowIndex > 0
+              ? (point.distance - points[rowIndex - 1]!.distance) * 0.18
+              : Number.POSITIVE_INFINITY;
+          let elevation =
+            previousRowElevation === undefined
+              ? sampledElevation
+              : THREE.MathUtils.clamp(
+                  sampledElevation,
+                  previousRowElevation - alongLimit,
+                  previousRowElevation + alongLimit,
+                );
+          const previousColumnElevation = rowElevations[columnIndex - 1];
+          if (previousColumnElevation !== undefined) {
+            const acrossLimit =
+              Math.abs(offset - terrainOffsets[columnIndex - 1]!) * 0.28;
+            elevation = THREE.MathUtils.clamp(
+              elevation,
+              previousColumnElevation - acrossLimit,
+              previousColumnElevation + acrossLimit,
+            );
+          }
+          rowElevations.push(elevation);
           terrainPositions.push(x, elevation + 0.008, z);
           const region = projection.road.region;
           const baseColor = new THREE.Color(0x75905c)
@@ -1778,6 +1843,7 @@ export class WorldScene {
           );
           terrainColors.push(color.r, color.g, color.b);
         }
+        terrainElevations.push(rowElevations);
       });
       for (let row = 0; row < points.length - 1; row += 1) {
         for (let column = 0; column < terrainOffsets.length - 1; column += 1) {
@@ -2592,8 +2658,10 @@ export class WorldScene {
     fields.userData.disableShadows = true;
     group.add(fields);
 
+    const boundarySegmentMaxLength = 5.5;
     const boundaryCount = fieldPlacements.reduce(
-      (count, field) => count + Math.ceil(field.depth / 12) * 2,
+      (count, field) =>
+        count + Math.ceil(field.depth / boundarySegmentMaxLength) * 2,
       0,
     );
     const boundaryColor =
@@ -2608,31 +2676,36 @@ export class WorldScene {
       boundaryCount,
     );
     let boundaryIndex = 0;
+    const localForward = new THREE.Vector3(0, 0, 1);
     fieldPlacements.forEach((field) => {
-      const segmentCount = Math.ceil(field.depth / 12);
+      const segmentCount = Math.ceil(field.depth / boundarySegmentMaxLength);
       const segmentLength = field.depth / segmentCount;
       for (const edge of [-1, 1]) {
         for (let segment = 0; segment < segmentCount; segment += 1) {
-          const distance = Math.max(
+          const startDistance = Math.max(
             0,
-            field.distance + (segment + 0.5 - segmentCount / 2) * segmentLength,
+            field.distance + (segment - segmentCount / 2) * segmentLength,
           );
-          const road = this.generator.sample(distance);
+          const endDistance = Math.max(0, startDistance + segmentLength);
+          const startRoad = this.generator.sample(startDistance);
+          const endRoad = this.generator.sample(endDistance);
           const offset = field.offset + edge * field.width * 0.5;
-          rotation.setFromEuler(
-            euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
+          const height = chunk.dominantRegion === "highland" ? 0.32 : 0.4;
+          const start = this.roadOffsetPosition(startRoad, offset, height);
+          const end = this.roadOffsetPosition(endRoad, offset, height);
+          const direction = end.clone().sub(start);
+          const length = direction.length();
+          rotation.setFromUnitVectors(
+            localForward,
+            direction.clone().normalize(),
           );
           matrix.compose(
-            this.roadOffsetPosition(
-              road,
-              offset,
-              chunk.dominantRegion === "highland" ? 0.32 : 0.4,
-            ),
+            start.clone().add(end).multiplyScalar(0.5),
             rotation,
             new THREE.Vector3(
               chunk.dominantRegion === "highland" ? 0.7 : 1.1,
               chunk.dominantRegion === "highland" ? 0.65 : 0.8,
-              segmentLength + 0.35,
+              length + 0.18,
             ),
           );
           boundaries.setMatrixAt(boundaryIndex, matrix);
@@ -5479,7 +5552,7 @@ export class WorldScene {
 
   private buildFence(chunk: WorldChunkDescriptor): THREE.Group {
     const fence = new THREE.Group();
-    const postCount = 12;
+    const postCount = 25;
     const side =
       hashString(
         `${this.settings.seed}:fence-side:${Math.floor(chunk.index / 4)}`,
@@ -5495,39 +5568,46 @@ export class WorldScene {
       postCount,
     );
     const rails = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(
-        0.1,
-        0.1,
-        (CHUNK_LENGTH_M / (postCount - 1)) * 0.92,
-      ),
+      new THREE.BoxGeometry(0.1, 0.1, 1),
       material.clone(),
       (postCount - 1) * 2,
     );
     const matrix = new THREE.Matrix4();
     const rotation = new THREE.Quaternion();
-    const euler = new THREE.Euler();
+    const localForward = new THREE.Vector3(0, 0, 1);
+    const postPositions: THREE.Vector3[] = [];
     for (let index = 0; index < postCount; index += 1) {
       const distance =
         chunk.startDistanceM + (index / (postCount - 1)) * CHUNK_LENGTH_M;
       const road = this.generator.sample(distance);
       const offset = side * 8.5;
+      const postPosition = this.roadOffsetPosition(road, offset, 0.495);
+      postPositions.push(postPosition);
       matrix.compose(
-        this.roadOffsetPosition(road, offset, 0.495),
+        postPosition,
         rotation.identity(),
         new THREE.Vector3(1, 1, 1),
       );
       posts.setMatrixAt(index, matrix);
-      if (index === postCount - 1) continue;
-      const railDistance = distance + CHUNK_LENGTH_M / (postCount - 1) / 2;
-      const railRoad = this.generator.sample(railDistance);
-      rotation.setFromEuler(
-        euler.set(Math.atan(railRoad.gradePercent / 100), -railRoad.heading, 0),
-      );
+    }
+    for (let index = 0; index < postCount - 1; index += 1) {
       [0.38, 0.78].forEach((height, railIndex) => {
+        const start = postPositions[index]!.clone().setY(
+          postPositions[index]!.y - 0.495 + height,
+        );
+        const end = postPositions[index + 1]!.clone().setY(
+          postPositions[index + 1]!.y - 0.495 + height,
+        );
+        const direction = end.clone().sub(start);
+        const length = direction.length();
+        rotation.setFromUnitVectors(
+          localForward,
+          direction.clone().normalize(),
+        );
         matrix.compose(
-          this.roadOffsetPosition(railRoad, offset, height),
+          start.clone().add(end).multiplyScalar(0.5),
           rotation,
-          new THREE.Vector3(1, 1, 1),
+          new THREE.Vector3(1, 1, length * 0.94),
         );
         rails.setMatrixAt(index * 2 + railIndex, matrix);
       });
@@ -6024,6 +6104,7 @@ export class WorldScene {
 
   private setVisualQaDistance(distanceM: number): void {
     const targetDistance = Math.max(0, distanceM);
+    this.visualQaDistanceOverride = targetDistance;
     if (targetDistance < this.originDistanceM) {
       this.originDistanceM = 0;
       this.originX = 0;
@@ -6039,6 +6120,7 @@ export class WorldScene {
     this.ensureChunks(this.rideDistanceM);
     this.updateCyclist(sample, this.cadenceRpm, this.speedKph);
     this.updateCamera(10);
+    window.__INFINIBIKE_DEBUG__ = this.getDiagnostics();
   }
 
   private findRegionDistance(region: keyof RegionWeights): number {

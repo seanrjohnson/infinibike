@@ -39,7 +39,7 @@ for (const landscape of ["countryside", "city"] as const) {
             (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))
               ?.postProcessing,
         )
-        .toBe(graphics === "high" ? "subtle-bloom" : "off");
+        .toBe("off");
       const diagnostics = await page.evaluate(
         () => window.__INFINIBIKE_DEBUG__,
       );
@@ -50,13 +50,8 @@ for (const landscape of ["countryside", "city"] as const) {
       expect(Number(diagnostics?.contextLosses)).toBe(0);
       expect(Number(diagnostics?.renderWidth)).toBeGreaterThan(0);
       expect(Number(diagnostics?.renderHeight)).toBeGreaterThan(0);
-      if (graphics === "high") {
-        expect(Number(diagnostics?.postWidth)).toBeGreaterThan(0);
-        expect(Number(diagnostics?.postHeight)).toBeGreaterThan(0);
-      } else {
-        expect(Number(diagnostics?.postWidth)).toBe(0);
-        expect(Number(diagnostics?.postHeight)).toBe(0);
-      }
+      expect(Number(diagnostics?.postWidth)).toBe(0);
+      expect(Number(diagnostics?.postHeight)).toBe(0);
       await page.screenshot({
         path: `test-results/visual-qa/${landscape}-${graphics}-1440p.png`,
         animations: "disabled",
@@ -202,6 +197,12 @@ test("captures moving countryside wildlife", async ({ page }, testInfo) => {
     (distance) => window.__INFINIBIKE_VISUAL_QA__!.setDistance(distance),
     dinosaurDistance - 45,
   );
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.distanceM,
+    )
+    .toBe(dinosaurDistance - 45);
   await page.locator(".modal-layer").evaluate((element) => {
     (element as HTMLElement).style.display = "none";
   });
@@ -213,6 +214,13 @@ test("captures moving countryside wildlife", async ({ page }, testInfo) => {
       ),
     )
     .toBeGreaterThan(0);
+  const wildlifeDiagnostics = await page.evaluate(
+    () => window.__INFINIBIKE_DEBUG__,
+  );
+  expect(Number(wildlifeDiagnostics?.cohesiveTakeoffFlocks)).toBeGreaterThan(0);
+  expect(Number(wildlifeDiagnostics?.dispersingTakeoffFlocks)).toBeGreaterThan(
+    0,
+  );
   await page.screenshot({
     path: "test-results/visual-qa/countryside-moving-wildlife-high.png",
     animations: "disabled",
