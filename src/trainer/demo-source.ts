@@ -3,7 +3,7 @@ import { SourceBase } from "./source-base";
 export class DemoSource extends SourceBase {
   readonly kind = "demo" as const;
   private timer?: number;
-  private effort = 120 / 260;
+  private powerW = 120;
 
   async connect(): Promise<void> {
     this.setStatus({
@@ -14,9 +14,11 @@ export class DemoSource extends SourceBase {
     this.timer = window.setInterval(() => {
       this.emitTelemetry({
         timestamp: performance.now(),
-        powerW: Math.round(this.effort * 260),
-        cadenceRpm: Math.round(this.effort * 100),
-        speedKph: Math.round(this.effort * 40),
+        powerW: this.powerW,
+        cadenceRpm:
+          this.powerW <= 0
+            ? 0
+            : Math.round(55 + Math.min(1, this.powerW / 300) * 45),
       });
     }, 100);
   }
@@ -27,8 +29,8 @@ export class DemoSource extends SourceBase {
     this.setStatus({ state: "disconnected" });
   }
 
-  setEffort(effort: number): void {
-    this.effort = Math.max(0, Math.min(1, effort));
+  setPower(powerW: number): void {
+    this.powerW = Math.round(Math.max(0, Math.min(500, powerW)));
   }
 
   getLoadControl(): undefined {

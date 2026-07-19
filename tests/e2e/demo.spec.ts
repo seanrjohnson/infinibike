@@ -19,6 +19,23 @@ test("completes a demo ride and stores its summary", async ({ page }) => {
   await expect(
     page.getByLabel("Elevation profile for the next 1.5 kilometers"),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Minimize route preview" }).click();
+  await expect(
+    page.getByLabel("Elevation profile for the next 1.5 kilometers"),
+  ).toBeHidden();
+  await page.getByRole("button", { name: "Expand route preview" }).click();
+  await expect(
+    page.getByLabel("Elevation profile for the next 1.5 kilometers"),
+  ).toBeVisible();
+  const demoPower = page.getByRole("slider", { name: "Demo power" });
+  await expect(demoPower).toHaveValue("120");
+  await demoPower.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    input.value = "180";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#demo-power-value")).toHaveText("180 W");
+  await expect(page.locator("#hud-power")).toHaveText("180");
   await expect(
     page.getByRole("button", { name: "Change camera" }),
   ).toBeVisible();
@@ -39,6 +56,14 @@ test("completes a demo ride and stores its summary", async ({ page }) => {
   expect(await gradePreview.getAttribute("width")).not.toBe("0");
   expect(await gradePreview.getAttribute("height")).not.toBe("0");
   await expect(page.locator("#route-preview-high")).toHaveText(/-?\d+ m/);
+
+  await expect
+    .poll(async () =>
+      Number(
+        (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.distanceM,
+      ),
+    )
+    .toBeGreaterThan(1);
 
   await page.keyboard.down("ArrowUp");
   await page.waitForTimeout(1_500);

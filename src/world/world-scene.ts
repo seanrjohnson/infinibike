@@ -1406,12 +1406,20 @@ export class WorldScene {
     } as const;
     const fieldColors = fieldPalettes[chunk.dominantRegion];
     for (let index = 0; index < fieldCount; index += 1) {
+      const sideIndex = index % 2;
+      const side = sideIndex ? 1 : -1;
+      const slotsOnSide = sideIndex
+        ? Math.floor(fieldCount / 2)
+        : Math.ceil(fieldCount / 2);
+      const slotIndex = Math.floor(index / 2);
+      const slotDepth = CHUNK_LENGTH_M / slotsOnSide;
+      const depth = slotDepth * (0.68 + random() * 0.14);
       const distance =
-        chunk.startDistanceM + ((index + 0.35) / fieldCount) * CHUNK_LENGTH_M;
-      const side = index % 2 ? 1 : -1;
-      const offset = side * (58 + random() * 88);
-      const width = 34 + random() * 42;
-      const depth = 48 + random() * 74;
+        chunk.startDistanceM +
+        (slotIndex + 0.5) * slotDepth +
+        (random() - 0.5) * (slotDepth - depth) * 0.55;
+      const offset = side * (52 + random() * 75);
+      const width = 30 + random() * 34;
       fieldPlacements.push({
         distance,
         offset,
@@ -1423,50 +1431,65 @@ export class WorldScene {
       });
     }
 
-    const fieldTileCount = fieldPlacements.reduce((count, field) => {
-      return count + Math.ceil(field.width / 18) * Math.ceil(field.depth / 18);
-    }, 0);
-    const fields = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshLambertMaterial({ color: 0xffffff }),
-      fieldTileCount,
-    );
-    let fieldTileIndex = 0;
-    fieldPlacements.forEach((field) => {
-      const acrossSegments = Math.ceil(field.width / 18);
-      const alongSegments = Math.ceil(field.depth / 18);
-      const tileWidth = field.width / acrossSegments;
-      const tileDepth = field.depth / alongSegments;
-      for (let along = 0; along < alongSegments; along += 1) {
-        const distance = Math.max(
-          0,
-          field.distance + (along + 0.5 - alongSegments / 2) * tileDepth,
-        );
+    const fieldPositions: number[] = [];
+    const fieldVertexColors: number[] = [];
+    const fieldIndices: number[] = [];
+    fieldPlacements.forEach((field, fieldIndex) => {
+      const acrossSegments = Math.ceil(field.width / 10);
+      const alongSegments = Math.ceil(field.depth / 10);
+      const vertexStart = fieldPositions.length / 3;
+      const color = field.color
+        .clone()
+        .offsetHSL(0, 0, ((fieldIndex % 3) - 1) * 0.012);
+      for (let along = 0; along <= alongSegments; along += 1) {
+        const distance =
+          field.distance + (along / alongSegments - 0.5) * field.depth;
         const road = this.generator.sample(distance);
-        rotation.setFromEuler(
-          euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
-        );
-        for (let across = 0; across < acrossSegments; across += 1) {
+        for (let across = 0; across <= acrossSegments; across += 1) {
           const offset =
-            field.offset + (across + 0.5 - acrossSegments / 2) * tileWidth;
-          matrix.compose(
-            this.roadOffsetPosition(road, offset, 0.015),
-            rotation,
-            new THREE.Vector3(tileWidth + 0.25, 0.07, tileDepth + 0.25),
+            field.offset + (across / acrossSegments - 0.5) * field.width;
+          const position = this.roadOffsetPosition(road, offset, 0.045);
+          fieldPositions.push(position.x, position.y, position.z);
+          fieldVertexColors.push(color.r, color.g, color.b);
+        }
+      }
+      const rowLength = acrossSegments + 1;
+      for (let along = 0; along < alongSegments; along += 1) {
+        for (let across = 0; across < acrossSegments; across += 1) {
+          const base = vertexStart + along * rowLength + across;
+          fieldIndices.push(
+            base,
+            base + 1,
+            base + rowLength,
+            base + 1,
+            base + rowLength + 1,
+            base + rowLength,
           );
-          fields.setMatrixAt(fieldTileIndex, matrix);
-          fields.setColorAt(
-            fieldTileIndex,
-            field.color
-              .clone()
-              .offsetHSL(0, 0, ((fieldTileIndex % 3) - 1) * 0.012),
-          );
-          fieldTileIndex += 1;
         }
       }
     });
-    fields.instanceMatrix.needsUpdate = true;
-    fields.instanceColor!.needsUpdate = true;
+    const fieldGeometry = new THREE.BufferGeometry();
+    fieldGeometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(fieldPositions, 3),
+    );
+    fieldGeometry.setAttribute(
+      "color",
+      new THREE.Float32BufferAttribute(fieldVertexColors, 3),
+    );
+    fieldGeometry.setIndex(fieldIndices);
+    fieldGeometry.computeVertexNormals();
+    const fields = new THREE.Mesh(
+      fieldGeometry,
+      new THREE.MeshLambertMaterial({
+        vertexColors: true,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -2,
+      }),
+    );
+    fields.name = "countryside-fields";
+    fields.userData.disableShadows = true;
     group.add(fields);
 
     const boundaryCount = fieldPlacements.reduce(
@@ -1559,7 +1582,7 @@ export class WorldScene {
       const distance = chunk.startDistanceM + random() * CHUNK_LENGTH_M;
       const road = this.generator.sample(distance);
       const side = index % 2 ? 1 : -1;
-      const offset = side * (105 + random() * 105);
+      const offset = side * (95 + random() * 85);
       const scale = 1.35 + random() * 2.4;
       const groundY = this.terrainElevationAt(road, offset);
       const position = new THREE.Vector3(
@@ -1753,6 +1776,7 @@ export class WorldScene {
         cropRows.setMatrixAt(index, matrix);
       }
       cropRows.name = "countryside-crop-rows";
+      cropRows.userData.disableShadows = true;
       cropRows.instanceMatrix.needsUpdate = true;
       group.add(cropRows);
 

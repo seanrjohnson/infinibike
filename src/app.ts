@@ -1,7 +1,9 @@
 import {
   Bluetooth,
   Camera,
+  ChevronDown,
   ChevronLeft,
+  ChevronUp,
   Dices,
   Download,
   History,
@@ -89,7 +91,9 @@ type View =
 const ICONS = {
   Bluetooth,
   Camera,
+  ChevronDown,
   ChevronLeft,
+  ChevronUp,
   Dices,
   Download,
   History,
@@ -156,6 +160,8 @@ export class InfinibikeApp {
   };
   private lastHudUpdate = 0;
   private demoPressed = false;
+  private demoPowerW = 120;
+  private routePreviewCollapsed = false;
   private terrainScale = 0;
   private baseLoad?: number;
   private loadBusy = false;
@@ -232,6 +238,7 @@ export class InfinibikeApp {
   private async connectDemo(): Promise<void> {
     const demo = new DemoSource();
     this.demoSource = demo;
+    demo.setPower(this.demoPowerW);
     await this.setSource(demo);
     await demo.connect();
     this.profile = {
@@ -626,8 +633,8 @@ export class InfinibikeApp {
           <div><span>Distance</span><strong id="hud-distance">0.00</strong><small>km</small></div>
           <div><span>Time</span><strong id="hud-time">0:00</strong></div>
         </section>
-        <section class="route-preview" aria-labelledby="route-preview-title">
-          <header><span id="route-preview-title">Route ahead</span><strong>1.5 km</strong></header>
+        <section class="route-preview${this.routePreviewCollapsed ? " collapsed" : ""}" aria-labelledby="route-preview-title">
+          <header><span id="route-preview-title">Route ahead</span><div><strong>1.5 km</strong><button id="toggle-route-preview" class="route-preview-toggle" type="button" aria-label="${this.routePreviewCollapsed ? "Expand route preview" : "Minimize route preview"}" aria-expanded="${!this.routePreviewCollapsed}"><i data-lucide="${this.routePreviewCollapsed ? "chevron-down" : "chevron-up"}"></i></button></div></header>
           <canvas id="grade-preview" width="600" height="144" aria-label="Elevation profile for the next 1.5 kilometers"></canvas>
           <div class="route-preview-scale"><span id="route-preview-low">0 m</span><span>750 m</span><span id="route-preview-high">0 m</span></div>
         </section>
@@ -641,6 +648,7 @@ export class InfinibikeApp {
           <button id="camera" class="icon-button ride-menu" title="Change camera"><i data-lucide="camera"></i></button>
           <button id="audio" class="icon-button ride-menu" title="${this.audioEnabled ? "Mute ambient audio" : "Enable ambient audio"}"><i data-lucide="${this.audioEnabled ? "volume-2" : "volume-x"}"></i></button>
         </div>
+        ${this.demoSource ? `<label class="demo-power-control"><span>Demo power <output id="demo-power-value">${this.demoPowerW} W</output></span><input id="demo-power" type="range" min="0" max="500" step="5" value="${this.demoPowerW}" aria-label="Demo power" title="Set a steady hands-free demo effort"></label>` : ""}
         <div class="connection-badge">${escapeHtml(this.source?.getStatus().deviceName ?? "Controller")}</div>
       </main>
     `;
@@ -654,6 +662,22 @@ export class InfinibikeApp {
     this.root
       .querySelector("#audio")
       ?.addEventListener("click", () => this.toggleAudio());
+    this.root
+      .querySelector("#toggle-route-preview")
+      ?.addEventListener("click", () => {
+        this.routePreviewCollapsed = !this.routePreviewCollapsed;
+        this.showRideHud();
+      });
+    this.root
+      .querySelector<HTMLInputElement>("#demo-power")
+      ?.addEventListener("input", (event) => {
+        const input = event.currentTarget as HTMLInputElement;
+        this.demoPowerW = Math.max(0, Math.min(500, Number(input.value)));
+        this.demoSource?.setPower(this.demoPowerW);
+        const output =
+          this.root.querySelector<HTMLOutputElement>("#demo-power-value");
+        if (output) output.value = `${this.demoPowerW} W`;
+      });
     if (this.snapshot) this.updateHud(this.lastGrade);
   }
 
@@ -1081,13 +1105,17 @@ export class InfinibikeApp {
 
   private installGlobalInput(): void {
     const setPressed = (pressed: boolean): void => {
+      if (!this.demoSource) return;
       this.demoPressed = pressed;
-      this.demoSource?.setEffort(pressed ? 1 : 0.18);
+      this.demoSource.setPower(
+        pressed ? Math.max(this.demoPowerW, 260) : this.demoPowerW,
+      );
     };
     window.addEventListener("keydown", (event) => {
       if (
         (event.code === "Space" || event.code === "ArrowUp") &&
-        !event.repeat
+        !event.repeat &&
+        !(event.target as HTMLElement).closest("button, input, select")
       ) {
         event.preventDefault();
         setPressed(true);
