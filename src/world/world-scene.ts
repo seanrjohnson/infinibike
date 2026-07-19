@@ -1898,7 +1898,7 @@ export class WorldScene {
   }
 
   private animateCyclist(dt: number): void {
-    this.crankAngle += (this.cadenceRpm / 60) * Math.PI * 2 * dt;
+    this.crankAngle -= (this.cadenceRpm / 60) * Math.PI * 2 * dt;
     this.wheelAngle -= (this.speedKph / 3.6 / 0.64) * dt;
     this.wheels.forEach((wheel) => {
       wheel.rotation.x = this.wheelAngle;

@@ -228,9 +228,9 @@ export class FtmsBluetoothSource extends SourceBase {
           mode: "simulation-grade",
           label: "Simulated grade",
           unit: "%",
-          minimum: 0,
-          maximum: 8,
-          increment: 0.5,
+          minimum: -12,
+          maximum: 12,
+          increment: 0.1,
         };
       }
     } catch {

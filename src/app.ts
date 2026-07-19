@@ -248,9 +248,10 @@ export class InfinibikeApp {
     this.sourceUnsubscribers = [];
     await this.source?.disconnect();
     this.source = source;
+    this.baseLoad = undefined;
     this.sourceUnsubscribers.push(
       source.subscribe((sample) => {
-        this.latestTelemetry = sample;
+        this.latestTelemetry = { ...this.latestTelemetry, ...sample };
         this.model?.applyTelemetry(sample);
       }),
       source.subscribeStatus((status) => this.handleConnectionStatus(status)),
@@ -276,6 +277,8 @@ export class InfinibikeApp {
     const status = this.source?.getStatus();
     const demo = this.source?.kind === "demo";
     const control = this.source?.getLoadControl();
+    const defaultLoad =
+      control?.mode === "simulation-grade" ? 0 : control?.minimum;
     const calibration = this.profile
       ? `<div class="calibration-ready"><span>Effort profile</span><strong>${this.profile.cruisePowerW} W cruise · ${this.profile.hardPowerW} W hard</strong></div>`
       : `<div class="calibration-needed"><span>Effort profile required</span><strong>Calibrate before riding</strong></div>`;
@@ -308,7 +311,7 @@ export class InfinibikeApp {
             ${
               control
                 ? `<label><span>Terrain resistance</span><select id="resistance">${option("0", "Off", String(this.terrainScale))}${option("0.45", "Gentle", String(this.terrainScale))}${option("0.75", "Standard", String(this.terrainScale))}${option("1", "Strong", String(this.terrainScale))}</select></label>
-                  <div class="load-setting"><label for="base-load"><span>Baseline ${escapeHtml(control.label.toLowerCase())}</span></label><div class="range-row"><input id="base-load" type="range" min="${control.minimum}" max="${control.maximum}" step="${control.increment}" value="${this.baseLoad ?? control.minimum}"><output id="base-load-value">${this.baseLoad ?? control.minimum}${escapeHtml(control.unit)}</output><button id="apply-base-load">Apply</button></div></div>`
+                  <div class="load-setting"><label for="base-load"><span>Baseline ${escapeHtml(control.label.toLowerCase())}</span></label><div class="range-row"><input id="base-load" type="range" min="${control.minimum}" max="${control.maximum}" step="${control.increment}" value="${this.baseLoad ?? defaultLoad}"><output id="base-load-value">${this.baseLoad ?? defaultLoad}${escapeHtml(control.unit)}</output><button id="apply-base-load">Apply</button></div></div>`
                 : ""
             }
           </div>
@@ -1020,7 +1023,7 @@ export class InfinibikeApp {
       Math.abs(gradePercent - this.lastAppliedGrade) < 0.15
     )
       return;
-    this.baseLoad ??= control.minimum;
+    this.baseLoad ??= control.mode === "simulation-grade" ? 0 : control.minimum;
     this.loadBusy = true;
     this.lastLoadAt = performance.now();
     this.lastAppliedGrade = gradePercent;

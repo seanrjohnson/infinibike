@@ -31,13 +31,13 @@ export function decodeIndoorBikeData(
   if (flags & 0x0008) skip(2);
   if (flags & 0x0010) skip(3);
   if (flags & 0x0020) skip(2);
-  if (flags & 0x0040) skip(2);
-  if (flags & 0x0080) {
+  if (flags & 0x0040) {
     if (offset + 2 > value.byteLength)
       throw new PacketDecodeError("Truncated FTMS packet.");
     sample.powerW = value.getInt16(offset, true);
     offset += 2;
   }
+  if (flags & 0x0080) skip(2);
   if (flags & 0x0100) skip(2);
   if (flags & 0x0200) skip(1);
   if (flags & 0x0400) skip(1);

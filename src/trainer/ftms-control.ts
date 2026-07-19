@@ -8,7 +8,7 @@ export function decodeTargetFeatures(value: DataView): {
     return { supportsResistance: false, supportsSimulation: false };
   const target = value.getUint32(4, true);
   return {
-    supportsResistance: Boolean(target & (1 << 7)),
+    supportsResistance: Boolean(target & (1 << 2)),
     supportsSimulation: Boolean(target & (1 << 13)),
   };
 }
@@ -46,6 +46,6 @@ export function encodeSimulationGrade(value: number): Uint8Array {
   view.setInt16(1, 0, true);
   view.setInt16(3, Math.round(value * 100), true);
   bytes[5] = 40;
-  bytes[6] = 100;
+  bytes[6] = 51;
   return bytes;
 }
