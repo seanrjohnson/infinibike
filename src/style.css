@@ -480,6 +480,31 @@ select:focus {
   font-size: 0.73rem;
   font-weight: 700;
 }
+.climbing-indicator {
+  position: absolute;
+  left: 50%;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  display: grid;
+  min-width: 7.5rem;
+  padding: 0.55rem 0.8rem;
+  transform: translateX(-50%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(17, 29, 29, 0.82);
+  backdrop-filter: blur(10px);
+  text-align: center;
+}
+.climbing-indicator span {
+  color: #9eb0ac;
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.climbing-indicator strong {
+  color: #f1c75b;
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+}
 .route-preview {
   position: absolute;
   top: max(1rem, env(safe-area-inset-top));
@@ -496,6 +521,22 @@ select:focus {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+.route-preview-chart {
+  display: grid;
+  grid-template-columns: 2.3rem minmax(0, 1fr);
+  gap: 0.35rem;
+}
+.route-preview-y-scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0.05rem 0;
+  color: #91a5a1;
+  font-size: 0.48rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .route-preview header > div {
   display: flex;
@@ -525,6 +566,7 @@ select:focus {
   margin-bottom: 0;
 }
 .route-preview.collapsed canvas,
+.route-preview.collapsed .route-preview-chart,
 .route-preview.collapsed .route-preview-scale {
   display: none;
 }
@@ -625,6 +667,7 @@ select:focus {
 }
 .route-preview-scale {
   margin-top: 0.2rem;
+  margin-left: 2.65rem;
   color: #91a5a1;
   font-size: 0.52rem;
   font-variant-numeric: tabular-nums;
@@ -826,6 +869,13 @@ select:focus {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     min-height: 3.8rem;
+  }
+  .climbing-indicator {
+    left: 0.5rem;
+    bottom: max(4.8rem, calc(env(safe-area-inset-bottom) + 4.8rem));
+    min-width: 6.5rem;
+    padding: 0.4rem 0.55rem;
+    transform: none;
   }
   .hud > div {
     min-width: 0;

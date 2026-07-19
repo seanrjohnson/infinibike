@@ -635,8 +635,11 @@ export class InfinibikeApp {
         </section>
         <section class="route-preview${this.routePreviewCollapsed ? " collapsed" : ""}" aria-labelledby="route-preview-title">
           <header><span id="route-preview-title">Route ahead</span><div><strong>1.5 km</strong><button id="toggle-route-preview" class="route-preview-toggle" type="button" aria-label="${this.routePreviewCollapsed ? "Expand route preview" : "Minimize route preview"}" aria-expanded="${!this.routePreviewCollapsed}"><i data-lucide="${this.routePreviewCollapsed ? "chevron-down" : "chevron-up"}"></i></button></div></header>
-          <canvas id="grade-preview" width="600" height="144" aria-label="Elevation profile for the next 1.5 kilometers"></canvas>
-          <div class="route-preview-scale"><span id="route-preview-low">0 m</span><span>750 m</span><span id="route-preview-high">0 m</span></div>
+          <div class="route-preview-chart">
+            <div class="route-preview-y-scale" aria-hidden="true"><span id="route-preview-high">0 m</span><span id="route-preview-mid">0 m</span><span id="route-preview-low">0 m</span></div>
+            <canvas id="grade-preview" width="600" height="144" aria-label="Elevation profile for the next 1.5 kilometers"></canvas>
+          </div>
+          <div class="route-preview-scale" aria-hidden="true"><span>0</span><span>0.75</span><span>1.5 km</span></div>
         </section>
         <section class="ride-objective" aria-live="polite">
           <div><strong id="ride-cue">${modeLabel(this.rideMode.mode)}</strong><span id="ride-instruction">${goalLabel(this.rideMode)}</span></div>
@@ -649,6 +652,7 @@ export class InfinibikeApp {
           <button id="audio" class="icon-button ride-menu" title="${this.audioEnabled ? "Mute ambient audio" : "Enable ambient audio"}"><i data-lucide="${this.audioEnabled ? "volume-2" : "volume-x"}"></i></button>
         </div>
         ${this.demoSource ? `<label class="demo-power-control"><span>Demo power <output id="demo-power-value">${this.demoPowerW} W</output></span><input id="demo-power" type="range" min="0" max="500" step="5" value="${this.demoPowerW}" aria-label="Demo power" title="Set a steady hands-free demo effort"></label>` : ""}
+        <div class="climbing-indicator"><span>Total climbing</span><strong id="hud-climbing">0 m</strong></div>
         <div class="connection-badge">${escapeHtml(this.source?.getStatus().deviceName ?? "Controller")}</div>
       </main>
     `;
@@ -918,6 +922,7 @@ export class InfinibikeApp {
     );
     set("hud-distance", (this.snapshot.distanceM / 1000).toFixed(2));
     set("hud-time", formatDuration(this.snapshot.elapsedMs));
+    set("hud-climbing", `${Math.round(this.snapshot.elevationGainM)} m`);
     const previousSample = this.rideSamples.at(-1);
     if (
       !previousSample ||
@@ -1033,8 +1038,10 @@ export class InfinibikeApp {
       const element = this.root.querySelector(`#${id}`);
       if (element) element.textContent = value;
     };
-    set("route-preview-low", `${Math.round(minimum)} m`);
-    set("route-preview-high", `${Math.round(maximum)} m`);
+    const displayedElevationRange = high - low;
+    set("route-preview-low", "0 m");
+    set("route-preview-mid", `${Math.round(displayedElevationRange / 2)} m`);
+    set("route-preview-high", `${Math.round(displayedElevationRange)} m`);
   }
 
   private async applyTerrainLoad(gradePercent: number): Promise<void> {

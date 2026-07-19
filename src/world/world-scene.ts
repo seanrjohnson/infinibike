@@ -57,6 +57,38 @@ type ActiveChunk = {
   descriptor: WorldChunkDescriptor;
   detail: TerrainDetail;
 };
+type MovingActorKind =
+  | "car"
+  | "pedestrian"
+  | "cow"
+  | "sheep"
+  | "raccoon"
+  | "squirrel"
+  | "dinosaur"
+  | "sky-birds"
+  | "takeoff-flock"
+  | "plane"
+  | "helicopter";
+type MovingActor = {
+  object: THREE.Group;
+  kind: MovingActorKind;
+  routeDistanceM: number;
+  intervalM: number;
+  direction: -1 | 1;
+  speedMps: number;
+  side: -1 | 1;
+  phase: number;
+  elevated?: "fence" | "powerline";
+};
+type CloudSpec = {
+  distanceM: number;
+  lateralM: number;
+  altitudeM: number;
+  speedMps: number;
+  widthM: number;
+  phase: number;
+  lobes: { acrossM: number; alongM: number; heightM: number; scale: number }[];
+};
 
 const QUALITY = {
   low: { pixelRatio: 1, ahead: 5, shadows: false, density: 0.55 },
@@ -154,6 +186,9 @@ export class WorldScene {
   private readonly hemi = new THREE.HemisphereLight(0xffffff, 0x526341, 1.5);
   private rain?: THREE.Points;
   private clouds?: THREE.InstancedMesh;
+  private cloudSpecs: CloudSpec[] = [];
+  private movingScenery = new THREE.Group();
+  private movingActors: MovingActor[] = [];
   private generator = new WorldGenerator(DEFAULT_ENVIRONMENT);
   private settings = { ...DEFAULT_ENVIRONMENT };
   private readonly chunks = new Map<number, ActiveChunk>();
@@ -268,6 +303,7 @@ export class WorldScene {
         findCityTurnDistance: (afterM = 0) => this.findCityTurnDistance(afterM),
         findCountrysideRouteEvent: (kind, afterM = 0, angleDegrees) =>
           this.findCountrysideRouteEvent(kind, afterM, angleDegrees),
+        findMovingActor: (kind) => this.findMovingActor(kind),
       };
     }
     window.addEventListener("resize", this.scheduleResize);
@@ -304,6 +340,7 @@ export class WorldScene {
     this.applyQuality(this.resolveQuality(settings.graphics));
     this.applyAtmosphere();
     this.createWeather();
+    this.createMovingScenery();
     this.ensureChunks(0);
     const start = this.generator.sample(0);
     this.camera.position.set(start.x + 7, start.elevationM + 5.5, 12);
@@ -394,7 +431,14 @@ export class WorldScene {
       routeX: currentRoad.x,
       routeZ: currentRoad.z,
       cameraMode: this.cameraSettings.mode,
+      cameraRiderDistance: this.camera.position.distanceTo(
+        this.cyclist.position,
+      ),
       cadenceRpm: this.cadenceRpm,
+      movingActors: this.movingActors.length,
+      visibleMovingActors: this.movingActors.filter(
+        ({ object }) => object.visible,
+      ).length,
       landscape: this.settings.landscape,
       urbanChunks: this.settings.landscape === "city" ? this.chunks.size : 0,
       waterChunks:
@@ -415,6 +459,7 @@ export class WorldScene {
     if (!this.realtime && now - this.lastIdleRender < 250) return;
     this.lastIdleRender = now;
     this.animateWeather(dt);
+    this.animateMovingScenery(dt);
     this.animateCyclist(dt);
     this.updateCamera(dt);
     this.renderer.info.reset();
@@ -483,6 +528,7 @@ export class WorldScene {
     this.renderer.shadowMap.enabled = quality.shadows;
     this.sun.castShadow = quality.shadows;
     if (this.startApron) setShadow(this.startApron, quality.shadows);
+    setShadow(this.movingScenery, quality.shadows);
     this.chunks.forEach(({ group }) => setShadow(group, quality.shadows));
     if (qualityChanged && this.chunks.size > 0) {
       for (const chunk of this.chunks.values()) {
@@ -722,38 +768,34 @@ export class WorldScene {
       const random = seededRandom(
         hashString(`${this.settings.seed}:weather-clouds`),
       );
-      const matrix = new THREE.Matrix4();
+      this.cloudSpecs = [];
       for (let cluster = 0; cluster < clusterCount; cluster += 1) {
-        const center = new THREE.Vector3(
-          (random() - 0.5) * 520,
-          38 + random() * 28,
-          -120 - random() * 1_380,
-        );
         const width = 9 + random() * 14;
+        const lobes: CloudSpec["lobes"] = [];
         for (let lobe = 0; lobe < lobeCount; lobe += 1) {
-          matrix.compose(
-            center
-              .clone()
-              .add(
-                new THREE.Vector3(
-                  (lobe - 1) * width * 0.75,
-                  lobe === 1 ? 1.2 + random() * 2.2 : random() * 1.1,
-                  (random() - 0.5) * 5,
-                ),
-              ),
-            new THREE.Quaternion(),
-            new THREE.Vector3(
-              width * (0.72 + random() * 0.38),
-              2.4 + random() * 3.2,
-              5 + random() * 7,
-            ),
-          );
-          this.clouds.setMatrixAt(cluster * lobeCount + lobe, matrix);
+          lobes.push({
+            acrossM: (lobe - 1) * width * 0.75,
+            alongM: (random() - 0.5) * 6,
+            heightM: lobe === 1 ? 1.2 + random() * 2.2 : random() * 1.1,
+            scale: 0.72 + random() * 0.38,
+          });
         }
+        this.cloudSpecs.push({
+          distanceM:
+            -220 +
+            (cluster / Math.max(1, clusterCount - 1)) * 3_200 +
+            (random() - 0.5) * 180,
+          lateralM: (random() - 0.5) * 330,
+          altitudeM: 24 + random() * 44,
+          speedMps: 0.25 + random() * 0.85,
+          widthM: width,
+          phase: random() * Math.PI * 2,
+          lobes,
+        });
       }
-      this.clouds.instanceMatrix.needsUpdate = true;
       this.clouds.frustumCulled = false;
       this.scene.add(this.clouds);
+      this.updateClouds(0);
     }
     if (this.settings.weather === "rain") {
       const positions = new Float32Array(750 * 3);
@@ -781,14 +823,7 @@ export class WorldScene {
   }
 
   private animateWeather(dt: number): void {
-    if (this.clouds) {
-      const road = this.generator.sample(this.rideDistanceM);
-      this.clouds.position.set(
-        road.x - this.originX + Math.sin(this.elapsed * 0.02) * 18,
-        road.elevationM - this.originElevation,
-        road.z - this.originZ - 120,
-      );
-    }
+    this.updateClouds(dt);
     if (!this.rain) return;
     const attribute = this.rain.geometry.getAttribute(
       "position",
@@ -804,6 +839,558 @@ export class WorldScene {
       road.elevationM - this.originElevation,
       road.z - this.originZ,
     );
+  }
+
+  private updateClouds(dt: number): void {
+    if (!this.clouds) return;
+    const matrix = new THREE.Matrix4();
+    const rotation = new THREE.Quaternion();
+    const loopLengthM = 3_400;
+    this.cloudSpecs.forEach((cloud, cluster) => {
+      cloud.distanceM += cloud.speedMps * dt;
+      const minimumDistance = this.rideDistanceM - 480;
+      cloud.distanceM =
+        minimumDistance +
+        ((((cloud.distanceM - minimumDistance) % loopLengthM) + loopLengthM) %
+          loopLengthM);
+      const road = this.generator.sample(Math.max(0, cloud.distanceM));
+      const across = new THREE.Vector3(
+        Math.cos(road.heading),
+        0,
+        Math.sin(road.heading),
+      );
+      const forward = new THREE.Vector3(
+        Math.sin(road.heading),
+        0,
+        -Math.cos(road.heading),
+      );
+      const lateral =
+        cloud.lateralM + Math.sin(this.elapsed * 0.035 + cloud.phase) * 16;
+      cloud.lobes.forEach((lobe, lobeIndex) => {
+        const position = new THREE.Vector3(
+          road.x - this.originX,
+          road.elevationM - this.originElevation + cloud.altitudeM,
+          road.z - this.originZ,
+        )
+          .addScaledVector(across, lateral + lobe.acrossM)
+          .addScaledVector(forward, lobe.alongM);
+        position.y += lobe.heightM;
+        matrix.compose(
+          position,
+          rotation,
+          new THREE.Vector3(
+            cloud.widthM * lobe.scale,
+            2.4 + lobe.scale * 2.7,
+            5 + lobe.scale * 6,
+          ),
+        );
+        this.clouds!.setMatrixAt(cluster * 3 + lobeIndex, matrix);
+      });
+    });
+    this.clouds.instanceMatrix.needsUpdate = true;
+  }
+
+  private createMovingScenery(): void {
+    this.scene.remove(this.movingScenery);
+    disposeObject(this.movingScenery);
+    this.movingScenery = new THREE.Group();
+    this.movingScenery.name = "moving-scenery";
+    this.movingActors = [];
+    const random = seededRandom(
+      hashString(`${this.settings.seed}:${this.settings.landscape}:actors`),
+    );
+    const add = (
+      kind: MovingActorKind,
+      routeDistanceM: number,
+      intervalM: number,
+      direction: -1 | 1,
+      speedMps: number,
+      side: -1 | 1,
+      phase = random() * Math.PI * 2,
+      elevated?: MovingActor["elevated"],
+    ): void => {
+      const object = this.createActorModel(kind, random);
+      object.name = `moving-${kind}`;
+      this.movingScenery.add(object);
+      this.movingActors.push({
+        object,
+        kind,
+        routeDistanceM,
+        intervalM,
+        direction,
+        speedMps,
+        side,
+        phase,
+        elevated,
+      });
+    };
+
+    if (this.settings.landscape === "city") {
+      for (let index = 0; index < 7; index += 1) {
+        const direction: -1 | 1 = index % 2 === 0 ? 1 : -1;
+        add(
+          "car",
+          35 + index * 105 + random() * 45,
+          820,
+          direction,
+          7.5 + random() * 6,
+          direction,
+        );
+      }
+      for (let index = 0; index < 8; index += 1) {
+        const direction: -1 | 1 = index % 3 === 0 ? -1 : 1;
+        add(
+          "pedestrian",
+          25 + index * 78 + random() * 40,
+          690,
+          direction,
+          0.8 + random() * 0.8,
+          index % 2 === 0 ? -1 : 1,
+        );
+      }
+    } else {
+      const species: MovingActorKind[] = [
+        "cow",
+        "sheep",
+        "sheep",
+        "raccoon",
+        "squirrel",
+        "squirrel",
+      ];
+      species.forEach((kind, index) => {
+        const elevated =
+          kind === "squirrel"
+            ? random() < 0.45
+              ? "powerline"
+              : "fence"
+            : undefined;
+        add(
+          kind,
+          180 + index * 310 + random() * 180,
+          1_750 + random() * 900,
+          random() < 0.5 ? -1 : 1,
+          kind === "squirrel" ? 2.8 + random() * 1.8 : 0.3 + random() * 0.55,
+          random() < 0.5 ? -1 : 1,
+          undefined,
+          elevated,
+        );
+      });
+      add(
+        "dinosaur",
+        5_500 + random() * 5_000,
+        14_000 + random() * 5_000,
+        random() < 0.5 ? -1 : 1,
+        2.2,
+        random() < 0.5 ? -1 : 1,
+      );
+      for (let index = 0; index < 2; index += 1) {
+        add(
+          "sky-birds",
+          420 + index * 760 + random() * 280,
+          1_450 + random() * 550,
+          1,
+          4 + random() * 3,
+          index % 2 === 0 ? -1 : 1,
+        );
+        add(
+          "takeoff-flock",
+          700 + index * 920 + random() * 260,
+          2_100 + random() * 700,
+          1,
+          5,
+          index % 2 === 0 ? 1 : -1,
+          undefined,
+          random() < 0.5 ? "powerline" : "fence",
+        );
+      }
+    }
+
+    add(
+      "plane",
+      1_400 + random() * 1_400,
+      4_200 + random() * 1_800,
+      random() < 0.5 ? -1 : 1,
+      38,
+      random() < 0.5 ? -1 : 1,
+    );
+    add(
+      "helicopter",
+      3_200 + random() * 1_800,
+      5_600 + random() * 2_000,
+      random() < 0.5 ? -1 : 1,
+      19,
+      random() < 0.5 ? -1 : 1,
+    );
+    setShadow(this.movingScenery, QUALITY[this.quality].shadows);
+    this.scene.add(this.movingScenery);
+    this.animateMovingScenery(0);
+  }
+
+  private createActorModel(
+    kind: MovingActorKind,
+    random: () => number,
+  ): THREE.Group {
+    if (kind === "sky-birds" || kind === "takeoff-flock")
+      return this.createBirdFlock(kind === "sky-birds" ? 7 : 11);
+    const group = new THREE.Group();
+    const lambert = (color: number): THREE.MeshLambertMaterial =>
+      new THREE.MeshLambertMaterial({ color });
+    const mesh = (geometry: THREE.BufferGeometry, color: number): THREE.Mesh =>
+      new THREE.Mesh(geometry, lambert(color));
+
+    if (kind === "car") {
+      const colors = [0x386c78, 0x984d42, 0xd1c8b4, 0x68706e, 0xb08a38];
+      const body = mesh(
+        new THREE.BoxGeometry(1.72, 0.58, 3.9),
+        colors[Math.floor(random() * colors.length)]!,
+      );
+      body.position.y = 0.52;
+      const cabin = mesh(new THREE.BoxGeometry(1.42, 0.55, 1.9), 0x779098);
+      cabin.position.set(0, 1.02, -0.2);
+      group.add(body, cabin);
+      for (const axle of [-1.22, 1.22]) {
+        for (const side of [-0.88, 0.88]) {
+          const wheel = mesh(
+            new THREE.CylinderGeometry(0.31, 0.31, 0.16, 9),
+            0x202627,
+          );
+          wheel.rotation.z = Math.PI / 2;
+          wheel.position.set(side, 0.35, axle);
+          group.add(wheel);
+        }
+      }
+      return group;
+    }
+
+    if (kind === "pedestrian") {
+      const coatColors = [0xb05c46, 0x4d7181, 0xc18d42, 0x696071, 0x4f755b];
+      const body = mesh(
+        new THREE.CapsuleGeometry(0.25, 0.72, 4, 7),
+        coatColors[Math.floor(random() * coatColors.length)]!,
+      );
+      body.position.y = 1.18;
+      const head = mesh(new THREE.SphereGeometry(0.22, 8, 6), 0xb98263);
+      head.position.y = 1.96;
+      for (const side of [-1, 1]) {
+        const leg = mesh(new THREE.BoxGeometry(0.13, 0.72, 0.14), 0x30393b);
+        leg.position.set(side * 0.13, 0.4, side * 0.05);
+        leg.name = side < 0 ? "left-leg" : "right-leg";
+        group.add(leg);
+      }
+      group.add(body, head);
+      return group;
+    }
+
+    if (kind === "plane" || kind === "helicopter") {
+      if (kind === "plane") {
+        const fuselage = mesh(
+          new THREE.CapsuleGeometry(0.62, 5.4, 5, 9),
+          0xe2e4df,
+        );
+        fuselage.rotation.x = Math.PI / 2;
+        const wings = mesh(new THREE.BoxGeometry(11, 0.16, 1.35), 0xb8c4c5);
+        const tail = mesh(new THREE.BoxGeometry(4.2, 0.14, 0.72), 0xb8c4c5);
+        tail.position.z = 2.35;
+        const fin = mesh(new THREE.BoxGeometry(0.15, 1.4, 1.2), 0x8eaaad);
+        fin.position.set(0, 0.72, 2.45);
+        group.add(fuselage, wings, tail, fin);
+      } else {
+        const cabin = mesh(new THREE.SphereGeometry(1.25, 10, 7), 0x607f83);
+        cabin.scale.set(1.15, 0.85, 1.35);
+        const tail = mesh(new THREE.BoxGeometry(0.32, 0.32, 5.2), 0x526a6d);
+        tail.position.z = 3.1;
+        const rotor = mesh(new THREE.BoxGeometry(9, 0.08, 0.18), 0x252d2e);
+        rotor.position.y = 1.35;
+        rotor.name = "rotor";
+        const tailRotor = mesh(
+          new THREE.BoxGeometry(0.12, 2.1, 0.12),
+          0x252d2e,
+        );
+        tailRotor.position.set(0, 0.2, 5.6);
+        tailRotor.name = "tail-rotor";
+        group.add(cabin, tail, rotor, tailRotor);
+      }
+      return group;
+    }
+
+    const animalColors: Record<string, number> = {
+      cow: random() < 0.5 ? 0x8b684d : 0xd2cec0,
+      sheep: 0xd9d7c9,
+      raccoon: 0x6c716e,
+      squirrel: 0x9b5f35,
+      dinosaur: 0x5d7d48,
+    };
+    const size =
+      kind === "dinosaur"
+        ? 3.4
+        : kind === "cow"
+          ? 1.2
+          : kind === "sheep"
+            ? 0.9
+            : kind === "raccoon"
+              ? 0.48
+              : 0.32;
+    const body = mesh(
+      new THREE.IcosahedronGeometry(size * 0.62, 1),
+      animalColors[kind]!,
+    );
+    body.scale.set(1, 0.68, 1.45);
+    body.position.y = size * 0.82;
+    const head = mesh(
+      new THREE.IcosahedronGeometry(size * 0.34, 1),
+      kind === "raccoon" ? 0x3e4443 : animalColors[kind]!,
+    );
+    head.position.set(0, size * 1.05, -size * 0.92);
+    group.add(body, head);
+    if (kind === "dinosaur") {
+      body.scale.set(0.62, 0.9, 1.5);
+      body.position.y = 3.8;
+      head.position.set(0, 5.6, -3.5);
+      head.scale.set(1.4, 0.85, 1.7);
+      const tail = mesh(new THREE.ConeGeometry(1.15, 6.5, 7), 0x536f41);
+      tail.rotation.x = Math.PI / 2;
+      tail.position.set(0, 3.6, 3.7);
+      for (const side of [-1, 1]) {
+        const leg = mesh(new THREE.BoxGeometry(0.75, 3.2, 0.85), 0x536f41);
+        leg.position.set(side * 0.75, 1.6, 0.4);
+        leg.name = side < 0 ? "left-leg" : "right-leg";
+        group.add(leg);
+      }
+      group.add(tail);
+    } else {
+      const legCount = kind === "squirrel" ? 2 : 4;
+      for (let index = 0; index < legCount; index += 1) {
+        const leg = mesh(
+          new THREE.BoxGeometry(size * 0.16, size * 0.72, size * 0.16),
+          animalColors[kind]!,
+        );
+        leg.position.set(
+          (index % 2 ? 1 : -1) * size * 0.3,
+          size * 0.34,
+          (index < 2 ? -1 : 1) * size * 0.48,
+        );
+        leg.name = index % 2 ? "right-leg" : "left-leg";
+        group.add(leg);
+      }
+      if (kind === "raccoon" || kind === "squirrel") {
+        const tail = mesh(
+          new THREE.CylinderGeometry(size * 0.12, size * 0.3, size * 1.7, 7),
+          animalColors[kind]!,
+        );
+        tail.rotation.x = Math.PI / 3;
+        tail.position.set(0, size * 0.85, size * 1.05);
+        group.add(tail);
+      }
+    }
+    return group;
+  }
+
+  private createBirdFlock(count: number): THREE.Group {
+    const group = new THREE.Group();
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x263331,
+      side: THREE.DoubleSide,
+    });
+    for (let index = 0; index < count; index += 1) {
+      const bird = new THREE.Group();
+      bird.position.set(
+        ((index % 4) - 1.5) * 1.6,
+        (index % 3) * 0.55,
+        Math.floor(index / 4) * 1.7,
+      );
+      for (const side of [-1, 1]) {
+        const wing = new THREE.Mesh(
+          new THREE.BoxGeometry(0.82, 0.035, 0.18),
+          material,
+        );
+        wing.position.x = side * 0.38;
+        wing.rotation.z = side * 0.28;
+        wing.name = side < 0 ? "left-wing" : "right-wing";
+        bird.add(wing);
+      }
+      group.add(bird);
+    }
+    markNoShadows(group);
+    return group;
+  }
+
+  private animateMovingScenery(dt: number): void {
+    for (const actor of this.movingActors) {
+      if (actor.kind === "car" || actor.kind === "pedestrian") {
+        actor.routeDistanceM += actor.direction * actor.speedMps * dt;
+        const minimum = Math.max(0, this.rideDistanceM - 180);
+        actor.routeDistanceM =
+          minimum +
+          ((((actor.routeDistanceM - minimum) % actor.intervalM) +
+            actor.intervalM) %
+            actor.intervalM);
+        this.positionStreetActor(actor);
+        continue;
+      }
+
+      if (actor.routeDistanceM < this.rideDistanceM - 130) {
+        actor.routeDistanceM +=
+          Math.ceil(
+            (this.rideDistanceM - 130 - actor.routeDistanceM) / actor.intervalM,
+          ) * actor.intervalM;
+      }
+      const relativeDistance = actor.routeDistanceM - this.rideDistanceM;
+      if (actor.kind === "plane" || actor.kind === "helicopter") {
+        this.positionAircraft(actor, relativeDistance, dt);
+      } else if (actor.kind === "takeoff-flock") {
+        this.positionTakeoffFlock(actor, relativeDistance);
+      } else {
+        this.positionCountrysideActor(actor, relativeDistance);
+      }
+    }
+  }
+
+  private positionStreetActor(actor: MovingActor): void {
+    const road = this.generator.sample(Math.max(0, actor.routeDistanceM));
+    const offset =
+      actor.kind === "car"
+        ? actor.direction * 1.72
+        : actor.side * (6.25 + Math.sin(actor.phase) * 0.35);
+    const acrossX = Math.cos(road.heading);
+    const acrossZ = Math.sin(road.heading);
+    actor.object.visible =
+      actor.routeDistanceM - this.rideDistanceM < 680 &&
+      actor.routeDistanceM - this.rideDistanceM > -190;
+    actor.object.position.set(
+      road.x - this.originX + acrossX * offset,
+      road.elevationM - this.originElevation + 0.1,
+      road.z - this.originZ + acrossZ * offset,
+    );
+    actor.object.rotation.y =
+      -road.heading + (actor.direction < 0 ? Math.PI : 0);
+    if (actor.kind === "pedestrian") {
+      actor.object.position.y += Math.abs(
+        Math.sin(this.elapsed * actor.speedMps * 5 + actor.phase) * 0.045,
+      );
+      this.animateActorLimbs(actor, 5.5);
+    }
+  }
+
+  private positionCountrysideActor(
+    actor: MovingActor,
+    relativeDistance: number,
+  ): void {
+    actor.object.visible = relativeDistance > -120 && relativeDistance < 720;
+    if (!actor.object.visible) return;
+    const flying = actor.kind === "sky-birds";
+    const isSquirrel = actor.kind === "squirrel";
+    const travel = flying
+      ? Math.sin(this.elapsed * 0.22 + actor.phase) * 85
+      : isSquirrel
+        ? Math.sin(this.elapsed * actor.speedMps * 0.09 + actor.phase) * 34
+        : Math.sin(this.elapsed * actor.speedMps * 0.22 + actor.phase) * 9;
+    const road = this.generator.sample(
+      Math.max(0, actor.routeDistanceM + travel),
+    );
+    const baseOffset =
+      actor.kind === "dinosaur"
+        ? 19
+        : flying
+          ? 24
+          : isSquirrel
+            ? actor.elevated === "powerline"
+              ? 12.5
+              : 5.1
+            : actor.kind === "raccoon"
+              ? 10.5
+              : 17 + ((actor.phase * 7) % 17);
+    const offset = actor.side * baseOffset;
+    const ground = this.terrainElevationAt(road, offset);
+    const altitude = flying
+      ? 16 + Math.sin(this.elapsed * 0.7 + actor.phase) * 2.5
+      : isSquirrel && actor.elevated === "powerline"
+        ? 7.2
+        : isSquirrel && actor.elevated === "fence"
+          ? 1.35
+          : 0;
+    actor.object.position.set(
+      road.x - this.originX + Math.cos(road.heading) * offset,
+      ground - this.originElevation + altitude,
+      road.z - this.originZ + Math.sin(road.heading) * offset,
+    );
+    actor.object.rotation.y =
+      -road.heading + (actor.direction < 0 ? Math.PI : 0);
+    if (flying) this.animateBirdWings(actor.object, 7.5, actor.phase);
+    else this.animateActorLimbs(actor, actor.kind === "dinosaur" ? 2.8 : 5);
+  }
+
+  private positionTakeoffFlock(
+    actor: MovingActor,
+    relativeDistance: number,
+  ): void {
+    actor.object.visible = relativeDistance > -150 && relativeDistance < 620;
+    if (!actor.object.visible) return;
+    const takeoff = THREE.MathUtils.smoothstep(-relativeDistance, -55, 80);
+    const road = this.generator.sample(
+      Math.max(0, actor.routeDistanceM + takeoff * 75),
+    );
+    const startOffset = actor.elevated === "powerline" ? 12.5 : 5.2;
+    const offset = actor.side * (startOffset + takeoff * 62);
+    const ground = this.terrainElevationAt(road, offset);
+    const startHeight = actor.elevated === "powerline" ? 7.2 : 1.55;
+    actor.object.position.set(
+      road.x - this.originX + Math.cos(road.heading) * offset,
+      ground - this.originElevation + startHeight + takeoff * 24,
+      road.z - this.originZ + Math.sin(road.heading) * offset,
+    );
+    actor.object.rotation.y = -road.heading + actor.side * 0.55;
+    this.animateBirdWings(actor.object, 10, actor.phase);
+  }
+
+  private positionAircraft(
+    actor: MovingActor,
+    relativeDistance: number,
+    dt: number,
+  ): void {
+    actor.object.visible = relativeDistance > -310 && relativeDistance < 310;
+    if (!actor.object.visible) return;
+    const progress = THREE.MathUtils.clamp(
+      (this.rideDistanceM - actor.routeDistanceM + 310) / 620,
+      0,
+      1,
+    );
+    const road = this.generator.sample(Math.max(0, actor.routeDistanceM));
+    const offset = actor.side * (progress - 0.5) * 760;
+    actor.object.position.set(
+      road.x - this.originX + Math.cos(road.heading) * offset,
+      road.elevationM -
+        this.originElevation +
+        (actor.kind === "plane" ? 105 : 72) +
+        Math.sin(this.elapsed * 0.45 + actor.phase) * 3,
+      road.z - this.originZ + Math.sin(road.heading) * offset,
+    );
+    actor.object.rotation.y = -road.heading + actor.side * (Math.PI / 2);
+    actor.object.traverse((object) => {
+      if (object.name === "rotor") object.rotation.y += dt * 18;
+      if (object.name === "tail-rotor") object.rotation.z += dt * 22;
+    });
+  }
+
+  private animateActorLimbs(actor: MovingActor, frequency: number): void {
+    const stride = Math.sin(
+      this.elapsed * actor.speedMps * frequency + actor.phase,
+    );
+    actor.object.traverse((object) => {
+      if (object.name === "left-leg") object.rotation.x = stride * 0.34;
+      if (object.name === "right-leg") object.rotation.x = -stride * 0.34;
+    });
+  }
+
+  private animateBirdWings(
+    flock: THREE.Group,
+    frequency: number,
+    phase: number,
+  ): void {
+    const flap = Math.sin(this.elapsed * frequency + phase) * 0.5;
+    flock.traverse((object) => {
+      if (object.name === "left-wing") object.rotation.z = 0.22 + flap;
+      if (object.name === "right-wing") object.rotation.z = -0.22 - flap;
+    });
   }
 
   private ensureChunks(distanceM: number): void {
@@ -977,7 +1564,9 @@ export class WorldScene {
     const count = 16;
     const markings = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.11, 0.025, 3.2),
-      new THREE.MeshBasicMaterial({ color: 0xe9ddb7 }),
+      new THREE.MeshBasicMaterial({
+        color: this.settings.landscape === "city" ? 0xe0b83f : 0xe9ddb7,
+      }),
       count,
     );
     const matrix = new THREE.Matrix4();
@@ -4892,8 +5481,21 @@ export class WorldScene {
     return -1;
   }
 
+  private findMovingActor(kind: MovingActorKind): number {
+    return (
+      this.movingActors.find((actor) => actor.kind === kind)?.routeDistanceM ??
+      -1
+    );
+  }
+
   private rebase(): void {
     const origin = this.generator.sample(this.rideDistanceM);
+    const cameraShift = new THREE.Vector3(
+      origin.x - this.originX,
+      origin.elevationM - this.originElevation,
+      origin.z - this.originZ,
+    );
+    this.camera.position.sub(cameraShift);
     this.originDistanceM = this.rideDistanceM;
     this.originX = origin.x;
     this.originZ = origin.z;
@@ -4928,6 +5530,7 @@ declare global {
         afterM?: number,
         angleDegrees?: 30 | 60 | 90 | 120,
       ) => number;
+      findMovingActor: (kind: MovingActorKind) => number;
     };
   }
 }

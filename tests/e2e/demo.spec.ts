@@ -19,6 +19,11 @@ test("completes a demo ride and stores its summary", async ({ page }) => {
   await expect(
     page.getByLabel("Elevation profile for the next 1.5 kilometers"),
   ).toBeVisible();
+  await expect(page.locator(".route-preview-scale")).toContainText("0");
+  await expect(page.locator(".route-preview-scale")).toContainText("0.75");
+  await expect(page.locator(".route-preview-scale")).toContainText("1.5 km");
+  await expect(page.locator("#route-preview-mid")).toHaveText(/-?\d+ m/);
+  await expect(page.locator("#hud-climbing")).toHaveText(/\d+ m/);
   const objectiveBounds = await page.locator(".ride-objective").boundingBox();
   const viewport = page.viewportSize()!;
   expect(objectiveBounds).not.toBeNull();
@@ -90,6 +95,8 @@ test("completes a demo ride and stores its summary", async ({ page }) => {
   expect(Number(diagnostics?.calls)).toBeGreaterThan(0);
   expect(diagnostics?.landscape).toBe("city");
   expect(Number(diagnostics?.urbanChunks)).toBeGreaterThan(0);
+  expect(Number(diagnostics?.movingActors)).toBeGreaterThanOrEqual(17);
+  expect(Number(diagnostics?.visibleMovingActors)).toBeGreaterThan(0);
 
   await page.getByRole("button", { name: "Pause ride" }).click();
   await expect(

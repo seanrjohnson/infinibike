@@ -143,6 +143,7 @@ test("keeps streamed graphics bounded through seams, rebasing, and quality chang
   const rebased = await page.evaluate(() => window.__INFINIBIKE_DEBUG__!);
   expect(Number(rebased.originDistanceM)).toBe(2_001);
   expect(Number(rebased.chunks)).toBeLessThanOrEqual(11);
+  expect(Number(rebased.cameraRiderDistance)).toBeLessThan(35);
 
   const lakesideDistance = await page.evaluate(() =>
     window.__INFINIBIKE_VISUAL_QA__!.findRegionDistance("lakeside"),
@@ -174,6 +175,46 @@ test("keeps streamed graphics bounded through seams, rebasing, and quality chang
   });
   await page.screenshot({
     path: "test-results/visual-qa/countryside-lakeside-high.png",
+    animations: "disabled",
+  });
+});
+
+test("captures moving countryside wildlife", async ({ page }, testInfo) => {
+  test.skip(
+    !visualQaEnabled,
+    "Set INFINIBIKE_VISUAL_QA=1 to capture moving wildlife.",
+  );
+  test.skip(testInfo.project.name !== "desktop", "Desktop QA only.");
+  test.setTimeout(45_000);
+  await page.setViewportSize({ width: 2560, height: 1440 });
+  await page.goto("/?visualQa=1");
+  await page.getByRole("button", { name: "Ride with keys or touch" }).click();
+  await page.locator("#seed").fill("living-countryside");
+  await page.locator("#landscape").selectOption("countryside");
+  await page.locator("#graphics").selectOption("high");
+  await page.getByRole("button", { name: "Start ride" }).click();
+  await page.getByRole("button", { name: "Pause ride" }).click();
+  const dinosaurDistance = await page.evaluate(() =>
+    window.__INFINIBIKE_VISUAL_QA__!.findMovingActor("dinosaur"),
+  );
+  expect(dinosaurDistance).toBeGreaterThan(0);
+  await page.evaluate(
+    (distance) => window.__INFINIBIKE_VISUAL_QA__!.setDistance(distance),
+    dinosaurDistance - 45,
+  );
+  await page.locator(".modal-layer").evaluate((element) => {
+    (element as HTMLElement).style.display = "none";
+  });
+  await expect
+    .poll(async () =>
+      Number(
+        (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))
+          ?.visibleMovingActors,
+      ),
+    )
+    .toBeGreaterThan(0);
+  await page.screenshot({
+    path: "test-results/visual-qa/countryside-moving-wildlife-high.png",
     animations: "disabled",
   });
 });
