@@ -37,12 +37,16 @@ This checklist tracks the next feature work in recommended implementation order.
 
 ## Next Graphics Pass
 
-- [ ] **Windows visual QA:** capture countryside and city rides at 1440p in medium and high quality; check side-street connections, rear-block spacing, shadows, fog depth, and chunk transitions while moving.
-- [ ] **City refinement:** add more facade and roof silhouettes, parked vehicles and street furniture, district-specific block layouts, and occasional civic landmarks or plazas.
-- [ ] **Countryside refinement:** add distant settlements, field boundaries, layered forest canopies, more varied mountain profiles, and region-specific color grading.
-- [ ] **Atmosphere:** consider an optional high-quality post-processing tier for subtle bloom, ambient occlusion, and focus effects after the expanded view distance is visually tuned.
+- [x] **Windows visual QA:** capture countryside and city rides at 1440p in medium and high quality; check side-street connections, rear-block spacing, shadows, fog depth, and chunk transitions while moving.
+- [x] **City refinement:** add more facade and roof silhouettes, parked vehicles and street furniture, district-specific block layouts, and occasional civic landmarks or plazas.
+- [x] **Countryside refinement:** add distant settlements, field boundaries, layered forest canopies, more varied mountain profiles, and region-specific color grading.
+- [x] **Atmosphere:** consider an optional high-quality post-processing tier for subtle bloom, ambient occlusion, and focus effects after the expanded view distance is visually tuned.
 - [ ] **Trainer verification:** retest watts, virtual speed, forward pedaling, and signed hill resistance on the physical bike after moving development to Windows.
 
-The July graphics pass expands medium/high streaming depth, replaces short exponential fog with longer linear atmospheric perspective, widens terrain, adds countryside field/grove/horizon layers, and turns the city into connected blocks with parallel streets, rear buildings, rooftop fixtures, lane markings, and additional trees. Countryside rendered correctly under Linux SwiftShader; city diagnostics were valid, but VM screenshot capture could not acquire an idle compositor frame. Complete city visual QA on native Windows before further density tuning.
+The July graphics pass expands medium/high streaming depth, replaces short exponential fog with longer linear atmospheric perspective, widens terrain, adds countryside field/grove/horizon layers, and turns the city into connected blocks with parallel streets, rear buildings, rooftop fixtures, lane markings, and additional trees. Countryside rendered correctly under Linux SwiftShader; city diagnostics were valid, but VM screenshot capture could not acquire an idle compositor frame.
+
+Native Windows QA now covers the 2560×1440 medium/high matrix for both landscapes. The city pass adds deterministic cornices and district rooflines, industrial stacks, parked vehicles, curb furniture, and occasional civic plazas while retaining instanced geometry and bounded streaming.
+
+The countryside pass adds region-colored fields, hedgerow and stone boundaries, layered grove canopies, periodic distant settlements, and multi-depth foothill, peak, and snow-cap silhouettes. Region weights now gently grade exposure and fog as the ride moves. A procedural sky adds time- and weather-aware horizon color and celestial glow. High quality adds restrained bloom; ambient occlusion was tested and rejected because it softened the low-poly silhouettes and cost too much at 1440p, while focus effects were rejected as a poor fit for continuous riding.
 
 Implementation should keep Infinibike static, local-first, deterministic by seed, and safe around optional FTMS resistance writes.

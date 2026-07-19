@@ -1,4 +1,8 @@
 import * as THREE from "three";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import type {
   EnvironmentSettings,
   GraphicsPreference,
@@ -11,6 +15,7 @@ import {
   ROAD_HALF_WIDTH_M,
   cityIntersectionsForChunk,
   WorldGenerator,
+  type RegionWeights,
   type RoadSample,
   type WorldChunkDescriptor,
 } from "./world-generator";
@@ -47,6 +52,13 @@ const TIME_COLORS = {
   night: { sky: 0x142737, fog: 0x294550, sun: 0xa9c7df, ground: 0x315445 },
 } as const;
 
+const REGION_FOG_TINTS = {
+  meadow: new THREE.Color(0xd5d7ad),
+  woodland: new THREE.Color(0x9eb5a6),
+  lakeside: new THREE.Color(0xa8ccd0),
+  highland: new THREE.Color(0xb8bec0),
+} as const;
+
 function disposeObject(root: THREE.Object3D): void {
   root.traverse((object) => {
     const mesh = object as THREE.Mesh;
@@ -71,7 +83,11 @@ function setShadow(root: THREE.Object3D, enabled: boolean): void {
 
 export class WorldScene {
   private readonly renderer: THREE.WebGLRenderer;
+  private readonly composer: EffectComposer;
+  private readonly bloomPass: UnrealBloomPass;
   private readonly scene = new THREE.Scene();
+  private readonly skyMaterial: THREE.ShaderMaterial;
+  private readonly sky: THREE.Mesh;
   private readonly camera = new THREE.PerspectiveCamera(58, 1, 0.1, 1_800);
   private readonly worldRoot = new THREE.Group();
   private startApron?: THREE.Group;
@@ -125,6 +141,62 @@ export class WorldScene {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.skyMaterial = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+      uniforms: {
+        topColor: { value: new THREE.Color(0x6f9ead) },
+        horizonColor: { value: new THREE.Color(0xc4d9d5) },
+        celestialColor: { value: new THREE.Color(0xffe1a3) },
+        celestialDirection: {
+          value: new THREE.Vector3(-0.42, 0.36, -0.28).normalize(),
+        },
+        celestialIntensity: { value: 0.75 },
+      },
+      vertexShader: `
+        varying vec3 vSkyPosition;
+        void main() {
+          vSkyPosition = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vSkyPosition;
+        uniform vec3 topColor;
+        uniform vec3 horizonColor;
+        uniform vec3 celestialColor;
+        uniform vec3 celestialDirection;
+        uniform float celestialIntensity;
+        void main() {
+          vec3 direction = normalize(vSkyPosition);
+          float heightMix = smoothstep(0.08, 0.72, direction.y * 0.5 + 0.5);
+          vec3 color = mix(horizonColor, topColor, heightMix);
+          float alignment = max(dot(direction, celestialDirection), 0.0);
+          float glow = pow(alignment, 44.0) * 0.22;
+          float disc = smoothstep(0.9982, 0.9993, alignment);
+          color += celestialColor * (glow + disc * 0.7) * celestialIntensity;
+          gl_FragColor = vec4(color, 1.0);
+        }
+      `,
+    });
+    this.sky = new THREE.Mesh(
+      new THREE.SphereGeometry(1_450, 40, 20),
+      this.skyMaterial,
+    );
+    this.sky.frustumCulled = false;
+    this.sky.renderOrder = -1_000;
+    this.scene.add(this.sky);
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(1, 1),
+      0.14,
+      0.32,
+      0.86,
+    );
+    this.composer.addPass(this.bloomPass);
+    this.composer.addPass(new OutputPass());
     this.scene.add(this.worldRoot);
     this.scene.add(this.sun, this.sun.target, this.hemi);
     this.createCyclist();
@@ -172,6 +244,8 @@ export class WorldScene {
     this.rideDistanceM = snapshot.distanceM;
     if (this.rideDistanceM - this.originDistanceM >= 2_000) this.rebase();
     const sample = this.generator.sample(this.rideDistanceM);
+    if (this.settings.landscape === "countryside")
+      this.applyRegionalGrading(sample.region);
     this.ensureChunks(this.rideDistanceM);
     this.updateCyclist(sample, snapshot.cadenceRpm, snapshot.speedKph);
     return sample;
@@ -233,6 +307,7 @@ export class WorldScene {
       geometries: this.renderer.info.memory.geometries,
       textures: this.renderer.info.memory.textures,
       quality: this.quality,
+      postProcessing: this.quality === "high" ? "subtle-bloom" : "off",
       distanceM: this.rideDistanceM,
       cameraMode: this.cameraSettings.mode,
       cadenceRpm: this.cadenceRpm,
@@ -251,7 +326,8 @@ export class WorldScene {
     this.animateWeather(dt);
     this.animateCyclist(dt);
     this.updateCamera(dt);
-    this.renderer.render(this.scene, this.camera);
+    if (this.quality === "high") this.composer.render(dt);
+    else this.renderer.render(this.scene, this.camera);
     this.trackPerformance(dt);
     window.__INFINIBIKE_DEBUG__ = this.getDiagnostics();
   };
@@ -262,6 +338,7 @@ export class WorldScene {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+    this.composer.setSize(width, height);
   };
 
   private resolveQuality(preference: GraphicsPreference): QualityLevel {
@@ -277,6 +354,10 @@ export class WorldScene {
     this.renderer.setPixelRatio(
       Math.min(window.devicePixelRatio, quality.pixelRatio),
     );
+    this.composer.setPixelRatio(
+      Math.min(window.devicePixelRatio, quality.pixelRatio, 1.25),
+    );
+    this.bloomPass.enabled = level === "high";
     this.renderer.shadowMap.enabled = quality.shadows;
     this.sun.castShadow = quality.shadows;
     this.chunks.forEach(({ group }) => setShadow(group, quality.shadows));
@@ -308,6 +389,35 @@ export class WorldScene {
     const sky = new THREE.Color(palette.sky).multiplyScalar(weatherFog);
     const fog = new THREE.Color(palette.fog).multiplyScalar(weatherFog);
     this.scene.background = sky;
+    const topColor = sky
+      .clone()
+      .offsetHSL(
+        this.settings.time === "night" ? -0.01 : 0.015,
+        this.settings.time === "night" ? 0.08 : 0.04,
+        this.settings.time === "night" ? -0.09 : -0.08,
+      );
+    const horizonColor = fog
+      .clone()
+      .lerp(sky, this.settings.weather === "clear" ? 0.14 : 0.34);
+    (this.skyMaterial.uniforms.topColor!.value as THREE.Color).copy(topColor);
+    (this.skyMaterial.uniforms.horizonColor!.value as THREE.Color).copy(
+      horizonColor,
+    );
+    (this.skyMaterial.uniforms.celestialColor!.value as THREE.Color).setHex(
+      this.settings.time === "night"
+        ? 0xbcd9eb
+        : this.settings.time === "golden" || this.settings.time === "dawn"
+          ? 0xffc477
+          : 0xfff2c7,
+    );
+    this.skyMaterial.uniforms.celestialIntensity!.value =
+      this.settings.weather === "rain"
+        ? 0.04
+        : this.settings.weather === "cloudy"
+          ? 0.12
+          : this.settings.time === "night"
+            ? 0.42
+            : 0.78;
     const fogRange =
       this.settings.weather === "rain"
         ? { near: 110, far: 720 }
@@ -338,6 +448,51 @@ export class WorldScene {
     );
     this.hemi.groundColor.setHex(palette.ground);
     this.hemi.intensity = this.settings.time === "night" ? 0.8 : 1.45;
+  }
+
+  private applyRegionalGrading(region: RegionWeights): void {
+    const timeExposure =
+      this.settings.time === "night"
+        ? 0.92
+        : this.settings.time === "golden"
+          ? 1.1
+          : this.settings.time === "dawn"
+            ? 1.06
+            : 1.03;
+    const weatherExposure =
+      this.settings.weather === "rain"
+        ? -0.08
+        : this.settings.weather === "cloudy"
+          ? -0.035
+          : 0;
+    const targetExposure =
+      timeExposure +
+      weatherExposure +
+      region.meadow * 0.04 -
+      region.woodland * 0.05 +
+      region.lakeside * 0.01 -
+      region.highland * 0.025;
+    this.renderer.toneMappingExposure = THREE.MathUtils.lerp(
+      this.renderer.toneMappingExposure,
+      targetExposure,
+      0.012,
+    );
+
+    if (!(this.scene.fog instanceof THREE.Fog)) return;
+    const weatherFog =
+      this.settings.weather === "rain"
+        ? 0.72
+        : this.settings.weather === "cloudy"
+          ? 0.86
+          : 1;
+    const targetFog = new THREE.Color(
+      TIME_COLORS[this.settings.time].fog,
+    ).multiplyScalar(weatherFog);
+    targetFog.lerp(REGION_FOG_TINTS.meadow, region.meadow * 0.08);
+    targetFog.lerp(REGION_FOG_TINTS.woodland, region.woodland * 0.13);
+    targetFog.lerp(REGION_FOG_TINTS.lakeside, region.lakeside * 0.16);
+    targetFog.lerp(REGION_FOG_TINTS.highland, region.highland * 0.12);
+    this.scene.fog.color.lerp(targetFog, 0.008);
   }
 
   private createWeather(): void {
@@ -665,7 +820,7 @@ export class WorldScene {
     detail: TerrainDetail,
   ): THREE.Group | undefined {
     if (chunk.region.highland < 0.18) return undefined;
-    const count = detail === "near" ? 7 : 5;
+    const count = detail === "near" ? 8 : 6;
     const random = seededRandom(chunk.scenerySeed ^ 0xb441);
     const peaks = new THREE.InstancedMesh(
       new THREE.ConeGeometry(1, 1, 6),
@@ -674,7 +829,23 @@ export class WorldScene {
       }),
       count,
     );
+    const foothills = new THREE.InstancedMesh(
+      new THREE.ConeGeometry(1, 1, 7),
+      new THREE.MeshLambertMaterial({
+        color: this.settings.time === "night" ? 0x35494a : 0x59695d,
+      }),
+      count,
+    );
+    const snowCount = chunk.region.highland > 0.42 ? Math.ceil(count / 2) : 0;
+    const snowCaps = new THREE.InstancedMesh(
+      new THREE.ConeGeometry(1, 1, 6),
+      new THREE.MeshLambertMaterial({
+        color: this.settings.time === "night" ? 0x758289 : 0xd8ddd5,
+      }),
+      snowCount,
+    );
     const matrix = new THREE.Matrix4();
+    let snowIndex = 0;
     for (let index = 0; index < count; index += 1) {
       const distance = chunk.startDistanceM + random() * CHUNK_LENGTH_M;
       const road = this.generator.sample(distance);
@@ -693,10 +864,42 @@ export class WorldScene {
         new THREE.Vector3(width, height, width * (0.75 + random() * 0.45)),
       );
       peaks.setMatrixAt(index, matrix);
+      matrix.compose(
+        new THREE.Vector3(
+          road.x + offset * 0.68,
+          baseY + height * 0.24,
+          -distance + (random() - 0.5) * 38,
+        ),
+        new THREE.Quaternion().setFromAxisAngle(
+          new THREE.Vector3(0, 1, 0),
+          random() * Math.PI,
+        ),
+        new THREE.Vector3(
+          width * 1.45,
+          height * 0.5,
+          width * (1.1 + random() * 0.45),
+        ),
+      );
+      foothills.setMatrixAt(index, matrix);
+      if (snowIndex < snowCount && index % 2 === 0) {
+        matrix.compose(
+          new THREE.Vector3(road.x + offset, baseY + height * 0.82, -distance),
+          new THREE.Quaternion().setFromAxisAngle(
+            new THREE.Vector3(0, 1, 0),
+            random() * Math.PI,
+          ),
+          new THREE.Vector3(width * 0.46, height * 0.22, width * 0.46),
+        );
+        snowCaps.setMatrixAt(snowIndex, matrix);
+        snowIndex += 1;
+      }
     }
     peaks.instanceMatrix.needsUpdate = true;
+    foothills.instanceMatrix.needsUpdate = true;
+    snowCaps.instanceMatrix.needsUpdate = true;
     const group = new THREE.Group();
-    group.add(peaks);
+    group.name = "layered-landforms";
+    group.add(foothills, peaks, snowCaps);
     return group;
   }
 
@@ -711,32 +914,44 @@ export class WorldScene {
     const rotation = new THREE.Quaternion();
     const euler = new THREE.Euler();
     const fieldCount = detail === "near" ? 7 : 4;
+    type FieldPlacement = {
+      center: THREE.Vector3;
+      heading: number;
+      width: number;
+      depth: number;
+    };
+    const fieldPlacements: FieldPlacement[] = [];
     const fields = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshLambertMaterial({ color: 0xffffff }),
       fieldCount,
     );
-    const fieldColors = [0x789458, 0x91a963, 0x647f51, 0x9c9a5b];
+    const fieldPalettes = {
+      meadow: [0x86a65f, 0xa4b96b, 0x789458, 0xaaa263],
+      woodland: [0x58764d, 0x668454, 0x496b4b, 0x718257],
+      lakeside: [0x789b69, 0x8aa874, 0x668c67, 0x91a87c],
+      highland: [0x6f7d59, 0x818864, 0x68745d, 0x8c8967],
+    } as const;
+    const fieldColors = fieldPalettes[chunk.dominantRegion];
     for (let index = 0; index < fieldCount; index += 1) {
       const distance =
         chunk.startDistanceM + ((index + 0.35) / fieldCount) * CHUNK_LENGTH_M;
       const road = this.generator.sample(distance);
       const side = index % 2 ? 1 : -1;
       const offset = side * (58 + random() * 88);
+      const width = 34 + random() * 42;
+      const depth = 48 + random() * 74;
       const groundY =
         road.elevationM - 0.11 - Math.max(0, Math.abs(offset) - 5) * 0.025;
       rotation.setFromEuler(
         euler.set(Math.atan(road.gradePercent / 100), -road.heading, 0),
       );
-      matrix.compose(
-        new THREE.Vector3(
-          road.x + Math.cos(road.heading) * offset,
-          groundY,
-          -distance + Math.sin(road.heading) * offset,
-        ),
-        rotation,
-        new THREE.Vector3(34 + random() * 42, 0.07, 48 + random() * 74),
+      const center = new THREE.Vector3(
+        road.x + Math.cos(road.heading) * offset,
+        groundY,
+        -distance + Math.sin(road.heading) * offset,
       );
+      matrix.compose(center, rotation, new THREE.Vector3(width, 0.07, depth));
       fields.setMatrixAt(index, matrix);
       fields.setColorAt(
         index,
@@ -744,10 +959,50 @@ export class WorldScene {
           fieldColors[Math.floor(random() * fieldColors.length)]!,
         ),
       );
+      fieldPlacements.push({ center, heading: road.heading, width, depth });
     }
     fields.instanceMatrix.needsUpdate = true;
     fields.instanceColor!.needsUpdate = true;
     group.add(fields);
+
+    const boundaryCount = fieldPlacements.length * 2;
+    const boundaryColor =
+      chunk.dominantRegion === "highland"
+        ? 0x77766a
+        : chunk.dominantRegion === "lakeside"
+          ? 0x637d4d
+          : 0x456b3f;
+    const boundaries = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshLambertMaterial({ color: boundaryColor }),
+      boundaryCount,
+    );
+    fieldPlacements.forEach((field, fieldIndex) => {
+      const across = new THREE.Vector3(
+        Math.cos(field.heading),
+        0,
+        Math.sin(field.heading),
+      );
+      rotation.setFromEuler(euler.set(0, -field.heading, 0));
+      for (const [edgeIndex, edge] of [-1, 1].entries()) {
+        matrix.compose(
+          field.center
+            .clone()
+            .addScaledVector(across, edge * field.width * 0.5)
+            .setY(field.center.y + 0.32),
+          rotation,
+          new THREE.Vector3(
+            chunk.dominantRegion === "highland" ? 0.7 : 1.1,
+            chunk.dominantRegion === "highland" ? 0.65 : 0.8,
+            field.depth,
+          ),
+        );
+        boundaries.setMatrixAt(fieldIndex * 2 + edgeIndex, matrix);
+      }
+    });
+    boundaries.name = "countryside-field-boundaries";
+    boundaries.instanceMatrix.needsUpdate = true;
+    group.add(boundaries);
 
     const groveCount = Math.max(
       10,
@@ -764,6 +1019,11 @@ export class WorldScene {
     );
     const crowns = new THREE.InstancedMesh(
       new THREE.IcosahedronGeometry(1.5, 1),
+      new THREE.MeshLambertMaterial({ color: 0xffffff }),
+      groveCount,
+    );
+    const lowerCrowns = new THREE.InstancedMesh(
+      new THREE.IcosahedronGeometry(1.35, 1),
       new THREE.MeshLambertMaterial({ color: 0xffffff }),
       groveCount,
     );
@@ -792,19 +1052,92 @@ export class WorldScene {
         new THREE.Vector3(scale, scale * (0.85 + random() * 0.35), scale),
       );
       crowns.setMatrixAt(index, matrix);
-      crowns.setColorAt(
-        index,
-        new THREE.Color(index % 3 === 0 ? 0x466648 : 0x3d5b43).offsetHSL(
-          0,
-          0,
-          random() * 0.08,
+      const crownColor = new THREE.Color(
+        index % 3 === 0 ? 0x466648 : 0x3d5b43,
+      ).offsetHSL(0, 0, random() * 0.08);
+      crowns.setColorAt(index, crownColor);
+      matrix.compose(
+        position.clone().add(new THREE.Vector3(0, 1.15 * scale, 0)),
+        rotation.identity(),
+        new THREE.Vector3(
+          scale * 1.22,
+          scale * (0.62 + random() * 0.18),
+          scale * 1.18,
         ),
+      );
+      lowerCrowns.setMatrixAt(index, matrix);
+      lowerCrowns.setColorAt(
+        index,
+        crownColor.clone().offsetHSL(-0.01, 0.04, -0.08),
       );
     }
     trunks.instanceMatrix.needsUpdate = true;
     crowns.instanceMatrix.needsUpdate = true;
     crowns.instanceColor!.needsUpdate = true;
-    group.add(trunks, crowns);
+    lowerCrowns.instanceMatrix.needsUpdate = true;
+    lowerCrowns.instanceColor!.needsUpdate = true;
+    group.add(trunks, lowerCrowns, crowns);
+
+    const hasSettlement =
+      chunk.index > 0 &&
+      chunk.index % 5 === 2 &&
+      (chunk.region.meadow > 0.2 || chunk.region.lakeside > 0.28);
+    if (hasSettlement) {
+      const settlementRandom = seededRandom(chunk.scenerySeed ^ 0x5e771e);
+      const houseCount = detail === "near" ? 8 : 5;
+      const houseBodies = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshLambertMaterial({ color: 0xffffff }),
+        houseCount,
+      );
+      const houseRoofs = new THREE.InstancedMesh(
+        new THREE.ConeGeometry(1, 1, 4),
+        new THREE.MeshLambertMaterial({ color: 0x704b3e }),
+        houseCount,
+      );
+      const houseColors = [0xd3c29e, 0xb9b9a7, 0xc69a78, 0xaeb9ae];
+      const settlementSide = settlementRandom() > 0.5 ? 1 : -1;
+      for (let index = 0; index < houseCount; index += 1) {
+        const distance = chunk.startDistanceM + 35 + settlementRandom() * 180;
+        const road = this.generator.sample(distance);
+        const offset = settlementSide * (105 + settlementRandom() * 55);
+        const width = 5.5 + settlementRandom() * 3.5;
+        const depth = 7 + settlementRandom() * 4;
+        const height = 4 + settlementRandom() * 2.5;
+        const groundY =
+          road.elevationM - 0.08 - Math.max(0, Math.abs(offset) - 5) * 0.025;
+        const position = new THREE.Vector3(
+          road.x + Math.cos(road.heading) * offset,
+          groundY,
+          -distance + Math.sin(road.heading) * offset,
+        );
+        rotation.setFromEuler(euler.set(0, -road.heading, 0));
+        matrix.compose(
+          position.clone().setY(groundY + height / 2),
+          rotation,
+          new THREE.Vector3(width, height, depth),
+        );
+        houseBodies.setMatrixAt(index, matrix);
+        houseBodies.setColorAt(
+          index,
+          new THREE.Color(
+            houseColors[Math.floor(settlementRandom() * houseColors.length)]!,
+          ),
+        );
+        rotation.setFromEuler(euler.set(0, -road.heading + Math.PI / 4, 0));
+        matrix.compose(
+          position.clone().setY(groundY + height + 1.35),
+          rotation,
+          new THREE.Vector3(width * 0.78, 2.7, depth * 0.78),
+        );
+        houseRoofs.setMatrixAt(index, matrix);
+      }
+      houseBodies.name = "countryside-distant-settlement";
+      houseBodies.instanceMatrix.needsUpdate = true;
+      houseBodies.instanceColor!.needsUpdate = true;
+      houseRoofs.instanceMatrix.needsUpdate = true;
+      group.add(houseBodies, houseRoofs);
+    }
     return group;
   }
 
@@ -841,6 +1174,9 @@ export class WorldScene {
           : chunk.index % 3 === 1
             ? "downtown"
             : "residential";
+    const hasCivicPlaza = detail === "near" && chunk.index % 11 === 6;
+    const civicSide = chunk.scenerySeed % 2 === 0 ? 1 : -1;
+    const civicDistance = chunk.startDistanceM + CHUNK_LENGTH_M * 0.56;
     group.name = `city-${district}-${chunk.index}`;
     const matrix = new THREE.Matrix4();
     const rotation = new THREE.Quaternion();
@@ -1227,7 +1563,12 @@ export class WorldScene {
         };
       },
     );
-    const buildings = [...frontageBuildings, ...rearBuildings];
+    const buildings = [...frontageBuildings, ...rearBuildings].filter(
+      (building) =>
+        !hasCivicPlaza ||
+        building.side !== civicSide ||
+        Math.abs(building.distance - civicDistance) > 38,
+    );
     const bodies = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshStandardMaterial({
@@ -1272,6 +1613,78 @@ export class WorldScene {
     roofs.instanceMatrix.needsUpdate = true;
     group.add(bodies, roofs);
 
+    const corniceBuildings = buildings.filter(
+      (building) => building.height > 8 && district !== "industrial",
+    );
+    const cornices = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshLambertMaterial({ color: 0xd0c8b7 }),
+      corniceBuildings.length,
+    );
+    corniceBuildings.forEach((building, index) => {
+      rotation.setFromEuler(euler.set(0, -building.road.heading, 0));
+      matrix.compose(
+        new THREE.Vector3(
+          building.center.x,
+          building.center.y + building.height / 2 - 0.2,
+          building.center.z,
+        ),
+        rotation,
+        new THREE.Vector3(
+          building.depth + 0.18,
+          0.32,
+          building.frontage + 0.18,
+        ),
+      );
+      cornices.setMatrixAt(index, matrix);
+    });
+    cornices.name = "city-building-cornices";
+    cornices.instanceMatrix.needsUpdate = true;
+    group.add(cornices);
+
+    const residentialRoofs = buildings.filter(
+      (building, index) =>
+        district === "residential" &&
+        index < frontageBuildings.length &&
+        index % 2 === 0,
+    );
+    const gableGeometry = new THREE.BufferGeometry();
+    gableGeometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(
+        [
+          -0.5, 0, -0.5, 0.5, 0, -0.5, 0, 1, -0.5, -0.5, 0, 0.5, 0.5, 0, 0.5, 0,
+          1, 0.5,
+        ],
+        3,
+      ),
+    );
+    gableGeometry.setIndex([
+      0, 1, 2, 3, 5, 4, 0, 2, 5, 0, 5, 3, 1, 4, 5, 1, 5, 2, 0, 3, 4, 0, 4, 1,
+    ]);
+    gableGeometry.computeVertexNormals();
+    const pitchedRoofs = new THREE.InstancedMesh(
+      gableGeometry,
+      new THREE.MeshLambertMaterial({ color: 0x604f48 }),
+      residentialRoofs.length,
+    );
+    residentialRoofs.forEach((building, index) => {
+      rotation.setFromEuler(euler.set(0, -building.road.heading, 0));
+      matrix.compose(
+        new THREE.Vector3(
+          building.center.x,
+          building.center.y + building.height / 2 + 1.1,
+          building.center.z,
+        ),
+        rotation,
+        new THREE.Vector3(building.depth, 2.2, building.frontage),
+      );
+      pitchedRoofs.setMatrixAt(index, matrix);
+    });
+    pitchedRoofs.name = "city-pitched-roofs";
+    pitchedRoofs.instanceMatrix.needsUpdate = true;
+    group.add(pitchedRoofs);
+
     const detailedRoofs = buildings.filter(
       (building, index) => building.height > 11 && index % 2 === 0,
     );
@@ -1299,6 +1712,32 @@ export class WorldScene {
     });
     roofFixtures.instanceMatrix.needsUpdate = true;
     group.add(roofFixtures);
+
+    if (district === "industrial") {
+      const stackBuildings = buildings.filter(
+        (building, index) => building.height > 7 && index % 3 === 0,
+      );
+      const stacks = new THREE.InstancedMesh(
+        new THREE.CylinderGeometry(0.42, 0.58, 3.8, 8),
+        new THREE.MeshLambertMaterial({ color: 0x596260 }),
+        stackBuildings.length,
+      );
+      stackBuildings.forEach((building, index) => {
+        matrix.compose(
+          new THREE.Vector3(
+            building.center.x,
+            building.center.y + building.height / 2 + 2.1,
+            building.center.z,
+          ),
+          rotation.identity(),
+          new THREE.Vector3(1, 1, 1),
+        );
+        stacks.setMatrixAt(index, matrix);
+      });
+      stacks.name = "city-industrial-stacks";
+      stacks.instanceMatrix.needsUpdate = true;
+      group.add(stacks);
+    }
 
     if (detail === "near") {
       const windowPlacements = buildings.flatMap((building) => {
@@ -1352,6 +1791,176 @@ export class WorldScene {
       });
       windows.instanceMatrix.needsUpdate = true;
       group.add(windows);
+    }
+
+    if (detail === "near") {
+      const vehicleCount =
+        district === "park" ? 4 : district === "industrial" ? 7 : 11;
+      const vehicleRandom = seededRandom(chunk.scenerySeed ^ 0xa812);
+      const vehicleColors = [
+        0x365f6b, 0x8d473d, 0xd0c7b4, 0x55605f, 0x9a7a3e, 0x6d7184,
+      ];
+      const vehicles = Array.from({ length: vehicleCount }, (_, index) => {
+        let distance =
+          chunk.startDistanceM +
+          ((index + 0.25 + vehicleRandom() * 0.5) / vehicleCount) *
+            CHUNK_LENGTH_M;
+        const nearbyIntersection = crossingDistances.find(
+          (crossingDistance) => Math.abs(distance - crossingDistance) < 10,
+        );
+        if (nearbyIntersection !== undefined)
+          distance += distance < nearbyIntersection ? -11 : 11;
+        distance = THREE.MathUtils.clamp(
+          distance,
+          chunk.startDistanceM + 5,
+          chunk.endDistanceM - 5,
+        );
+        const road = this.generator.sample(distance);
+        const side = index % 2 ? 1 : -1;
+        const outerStreet = index % 3 === 0;
+        const offset = side * (outerStreet ? parallelStreetOffset - 2.65 : 4.1);
+        const across = new THREE.Vector3(
+          Math.cos(road.heading),
+          0,
+          Math.sin(road.heading),
+        );
+        return {
+          road,
+          center: new THREE.Vector3(
+            road.x,
+            road.elevationM + (outerStreet ? -0.02 : 0.16),
+            -distance,
+          ).addScaledVector(across, offset),
+          color: new THREE.Color(
+            vehicleColors[Math.floor(vehicleRandom() * vehicleColors.length)]!,
+          ),
+        };
+      });
+      const carBodies = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          roughness: 0.68,
+          metalness: 0.16,
+        }),
+        vehicleCount,
+      );
+      const carCabins = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshStandardMaterial({
+          color: 0x698086,
+          roughness: 0.32,
+          metalness: 0.12,
+        }),
+        vehicleCount,
+      );
+      vehicles.forEach((vehicle, index) => {
+        rotation.setFromEuler(euler.set(0, -vehicle.road.heading, 0));
+        matrix.compose(
+          vehicle.center.clone().setY(vehicle.center.y + 0.38),
+          rotation,
+          new THREE.Vector3(1.78, 0.62, 4.15),
+        );
+        carBodies.setMatrixAt(index, matrix);
+        carBodies.setColorAt(index, vehicle.color);
+        matrix.compose(
+          vehicle.center.clone().setY(vehicle.center.y + 0.88),
+          rotation,
+          new THREE.Vector3(1.48, 0.58, 2.05),
+        );
+        carCabins.setMatrixAt(index, matrix);
+      });
+      carBodies.name = "city-parked-vehicles";
+      carBodies.instanceMatrix.needsUpdate = true;
+      carBodies.instanceColor!.needsUpdate = true;
+      carCabins.instanceMatrix.needsUpdate = true;
+      group.add(carBodies, carCabins);
+
+      const furnitureCount = district === "park" ? 14 : 8;
+      const furnitureRandom = seededRandom(chunk.scenerySeed ^ 0xb34c);
+      const bollards = new THREE.InstancedMesh(
+        new THREE.CylinderGeometry(0.1, 0.13, 0.85, 7),
+        new THREE.MeshLambertMaterial({ color: 0x414b49 }),
+        furnitureCount,
+      );
+      for (let index = 0; index < furnitureCount; index += 1) {
+        const distance =
+          chunk.startDistanceM +
+          ((index + 0.3 + furnitureRandom() * 0.4) / furnitureCount) *
+            CHUNK_LENGTH_M;
+        const road = this.generator.sample(distance);
+        const side = index % 2 ? 1 : -1;
+        const offset = side * 7.15;
+        matrix.compose(
+          new THREE.Vector3(
+            road.x + Math.cos(road.heading) * offset,
+            road.elevationM + 0.43,
+            -distance + Math.sin(road.heading) * offset,
+          ),
+          rotation.identity(),
+          new THREE.Vector3(1, 1, 1),
+        );
+        bollards.setMatrixAt(index, matrix);
+      }
+      bollards.name = "city-street-furniture";
+      bollards.instanceMatrix.needsUpdate = true;
+      group.add(bollards);
+    }
+
+    if (hasCivicPlaza) {
+      const road = this.generator.sample(civicDistance);
+      const across = new THREE.Vector3(
+        Math.cos(road.heading),
+        0,
+        Math.sin(road.heading),
+      );
+      const plazaCenter = new THREE.Vector3(
+        road.x,
+        road.elevationM - 0.03,
+        -civicDistance,
+      ).addScaledVector(across, civicSide * 25);
+      const plaza = new THREE.Mesh(
+        new THREE.BoxGeometry(34, 0.12, 54),
+        new THREE.MeshLambertMaterial({ color: 0xb8b2a3 }),
+      );
+      plaza.position.copy(plazaCenter);
+      plaza.rotation.y = -road.heading;
+      const hall = new THREE.Mesh(
+        new THREE.BoxGeometry(15, 9, 29),
+        new THREE.MeshStandardMaterial({
+          color: 0xc4b6a0,
+          roughness: 0.82,
+        }),
+      );
+      hall.position
+        .copy(plazaCenter)
+        .addScaledVector(across, civicSide * 15)
+        .setY(plazaCenter.y + 4.55);
+      hall.rotation.y = -road.heading;
+      const clockTower = new THREE.Mesh(
+        new THREE.BoxGeometry(5.5, 15, 7),
+        new THREE.MeshStandardMaterial({
+          color: 0xa79b88,
+          roughness: 0.8,
+        }),
+      );
+      clockTower.position
+        .copy(hall.position)
+        .addScaledVector(across, -civicSide * 0.2)
+        .setY(plazaCenter.y + 7.55);
+      clockTower.rotation.y = -road.heading;
+      const towerRoof = new THREE.Mesh(
+        new THREE.ConeGeometry(4.8, 4.2, 4),
+        new THREE.MeshLambertMaterial({ color: 0x4f5f5c }),
+      );
+      towerRoof.position
+        .copy(clockTower.position)
+        .setY(clockTower.position.y + 9.55);
+      towerRoof.rotation.y = -road.heading + Math.PI / 4;
+      const civicGroup = new THREE.Group();
+      civicGroup.name = "city-civic-plaza";
+      civicGroup.add(plaza, hall, clockTower, towerRoof);
+      group.add(civicGroup);
     }
 
     const lightCount = detail === "near" ? 16 : 8;
@@ -2249,6 +2858,7 @@ export class WorldScene {
     const alpha = 1 - Math.exp(-dt / smoothing);
     this.camera.position.lerp(targetPosition, alpha);
     this.camera.lookAt(lookAt);
+    this.sky.position.copy(this.camera.position);
     this.sun.position.set(x - 70, y + 130, z + 60);
     this.sun.target.position.set(x, y, z - 40);
   }
