@@ -5,6 +5,7 @@ import {
   cityIntersectionsForChunk,
   WorldGenerator,
   dominantRegion,
+  terrainElevationAt,
 } from "../../src/world/world-generator";
 
 describe("WorldGenerator", () => {
@@ -41,6 +42,40 @@ describe("WorldGenerator", () => {
     const second = generator.createChunk(4);
     expect(first.samples.at(-1)).toEqual(second.samples[0]);
     expect(first.endDistanceM).toBe(second.startDistanceM);
+  });
+
+  it("keeps off-road terrain continuous and deterministic at chunk seams", () => {
+    const settings = {
+      ...DEFAULT_ENVIRONMENT,
+      seed: "continuous-terrain",
+      terrain: "rugged" as const,
+    };
+    const generator = new WorldGenerator(settings);
+    const first = generator.createChunk(3);
+    const second = generator.createChunk(4);
+    for (const offset of [-220, -70, 25, 105, 220]) {
+      const firstElevation = terrainElevationAt(
+        settings,
+        first.samples.at(-1)!,
+        offset,
+      );
+      const secondElevation = terrainElevationAt(
+        settings,
+        second.samples[0]!,
+        offset,
+      );
+      expect(firstElevation).toBeCloseTo(secondElevation, 10);
+      expect(terrainElevationAt(settings, second.samples[0]!, offset)).toBe(
+        secondElevation,
+      );
+      expect(
+        terrainElevationAt(
+          { ...settings, seed: "  CONTINUOUS-TERRAIN  " },
+          second.samples[0]!,
+          offset,
+        ),
+      ).toBe(secondElevation);
+    }
   });
 
   it.each(["countryside", "city"] as const)(
@@ -157,5 +192,16 @@ describe("WorldGenerator", () => {
         "overlook",
       ]),
     );
+  });
+
+  it("does not report countryside landmarks for city chunks", () => {
+    const city = new WorldGenerator({
+      ...DEFAULT_ENVIRONMENT,
+      landscape: "city",
+      seed: "urban-events",
+    });
+    for (let index = 0; index < 80; index += 1) {
+      expect(city.createChunk(index).landmark).toBeUndefined();
+    }
   });
 });

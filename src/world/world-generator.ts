@@ -72,6 +72,48 @@ export type WorldChunkDescriptor = {
   landmark?: LandmarkDescriptor;
 };
 
+export function terrainElevationAt(
+  settings: EnvironmentSettings,
+  sample: RoadSample,
+  offset: number,
+): number {
+  const edgeBlend = Math.min(1, Math.max(0, (Math.abs(offset) - 6) / 18));
+  const landscapeRelief = settings.landscape === "city" ? 0.12 : 1;
+  const normalizedSeed = settings.seed.trim().toLowerCase() || "open-road";
+  const terrainPhase =
+    (hashString(`${normalizedSeed}:terrain-relief`) % 10_000) * 0.001;
+  const waterSide =
+    hashString(`${normalizedSeed}:water-side`) % 2 === 0 ? -1 : 1;
+  const waterInfluence =
+    settings.landscape === "countryside" && Math.sign(offset) === waterSide
+      ? sample.region.lakeside * smoothstep((Math.abs(offset) - 24) / 22)
+      : 0;
+  const undulation =
+    (Math.sin(sample.distanceM * 0.019 + offset * 0.071 + terrainPhase) * 2.8 +
+      Math.sin(sample.distanceM * 0.008 - offset * 0.11 + terrainPhase * 0.37) *
+        1.4) *
+    edgeBlend *
+    landscapeRelief *
+    (1 - waterInfluence * 0.82);
+  const highland =
+    sample.region.highland *
+    edgeBlend *
+    Math.abs(offset) *
+    (settings.terrain === "rugged" ? 0.16 : 0.12) *
+    landscapeRelief;
+  const waterBasin =
+    waterInfluence * (3.1 + Math.min(120, Math.abs(offset)) * 0.008);
+  return (
+    sample.elevationM -
+    0.08 -
+    Math.max(0, Math.abs(offset) - 5) *
+      (settings.landscape === "city" ? 0.004 : 0.025) +
+    undulation +
+    highland -
+    waterBasin
+  );
+}
+
 type Boundary = {
   x: number;
   elevation: number;
@@ -293,6 +335,7 @@ export class WorldGenerator {
     index: number,
     region: RegionId,
   ): LandmarkDescriptor | undefined {
+    if (this.settings.landscape === "city") return undefined;
     if (index < 2) return undefined;
     const random = seededRandom(
       hashString(`${this.seedHash}:${index}:landmark`),
