@@ -957,8 +957,8 @@ export class WorldScene {
       });
       add(
         "dinosaur",
-        5_500 + random() * 5_000,
-        14_000 + random() * 5_000,
+        2_200 + random() * 2_000,
+        7_000 + random() * 3_000,
         random() < 0.5 ? -1 : 1,
         2.2,
         random() < 0.5 ? -1 : 1,
@@ -1283,9 +1283,6 @@ export class WorldScene {
     actor.object.rotation.y =
       -road.heading + (actor.direction < 0 ? Math.PI : 0);
     if (actor.kind === "pedestrian") {
-      actor.object.position.y += Math.abs(
-        Math.sin(this.elapsed * actor.speedMps * 5 + actor.phase) * 0.045,
-      );
       this.animateActorLimbs(actor, 5.5);
     }
     this.hideActorIfItIntersectsCamera(actor.object);
@@ -1418,10 +1415,25 @@ export class WorldScene {
       this.elapsed * actor.speedMps * frequency + actor.phase,
     );
     actor.object.traverse((object) => {
-      if (object.name === "left-leg") object.rotation.x = stride * 0.34;
-      if (object.name === "right-leg") object.rotation.x = -stride * 0.34;
-      if (object.name === "left-arm") object.rotation.x = -stride * 0.42;
-      if (object.name === "right-arm") object.rotation.x = stride * 0.42;
+      const bindRotationX = Number(
+        object.userData.bindRotationX ?? object.rotation.x,
+      );
+      object.userData.bindRotationX = bindRotationX;
+      const legSwing =
+        actor.kind === "pedestrian"
+          ? 0.34
+          : actor.kind === "dinosaur"
+            ? 0.16
+            : 0.2;
+      const limbStride = object.name.endsWith(".001") ? -stride : stride;
+      if (object.name.includes("left-leg"))
+        object.rotation.x = bindRotationX + limbStride * legSwing;
+      if (object.name.includes("right-leg"))
+        object.rotation.x = bindRotationX - limbStride * legSwing;
+      if (object.name.includes("left-arm"))
+        object.rotation.x = bindRotationX - stride * 0.42;
+      if (object.name.includes("right-arm"))
+        object.rotation.x = bindRotationX + stride * 0.42;
     });
   }
 
@@ -3207,7 +3219,7 @@ export class WorldScene {
               this.roadOffsetPosition(
                 road,
                 offset,
-                this.terrainElevationAt(road, offset) - road.elevationM,
+                this.terrainElevationAt(road, offset) - road.elevationM - 0.06,
               ),
             );
             crop.rotation.y = -road.heading;
@@ -3285,7 +3297,9 @@ export class WorldScene {
           balePlacements.forEach((placement) => {
             const bales = this.assetLibrary.instantiate("hay_bales");
             if (!bales) return;
-            bales.position.copy(placement.position);
+            bales.position
+              .copy(placement.position)
+              .addScaledVector(THREE.Object3D.DEFAULT_UP, -0.06);
             bales.rotation.y = placement.heading;
             bales.scale.setScalar(0.85 + baleRandom() * 0.18);
             group.add(bales);
@@ -3332,7 +3346,13 @@ export class WorldScene {
             pastureAnimals[index % pastureAnimals.length]!,
           );
           if (!animal) continue;
-          animal.position.copy(this.roadOffsetPosition(road, offset, 0));
+          animal.position.copy(
+            this.roadOffsetPosition(
+              road,
+              offset,
+              this.terrainElevationAt(road, offset) - road.elevationM - 0.05,
+            ),
+          );
           animal.rotation.y = animalRandom() * Math.PI * 2;
           animal.scale.setScalar(0.85 + animalRandom() * 0.2);
           group.add(animal);
@@ -3770,10 +3790,16 @@ export class WorldScene {
         0,
         Math.sin(road.heading),
       );
-      const center = this.roadOffsetPosition(road, offset);
+      const center = this.roadOffsetPosition(
+        road,
+        offset,
+        this.terrainElevationAt(road, offset) - road.elevationM - 0.08,
+      );
       if (this.assetLibrary.isReady) {
         const barn = this.assetLibrary.instantiate("barn");
         const silo = this.assetLibrary.instantiate("silo");
+        const farmhouse = this.assetLibrary.instantiate("farmhouse");
+        const produceStand = this.assetLibrary.instantiate("produce_stand");
         if (barn) {
           barn.position.copy(center);
           barn.rotation.y = -road.heading;
@@ -3782,6 +3808,22 @@ export class WorldScene {
         if (silo) {
           silo.position.copy(center).addScaledVector(across, side * 8.5);
           group.add(silo);
+        }
+        if (farmhouse) {
+          farmhouse.position.copy(center).addScaledVector(across, -side * 13.5);
+          farmhouse.rotation.y = -road.heading;
+          group.add(farmhouse);
+        }
+        if (produceStand) {
+          produceStand.position.copy(
+            this.roadOffsetPosition(
+              road,
+              side * 18,
+              this.terrainElevationAt(road, side * 18) - road.elevationM - 0.04,
+            ),
+          );
+          produceStand.rotation.y = -road.heading;
+          group.add(produceStand);
         }
       } else {
         const barn = new THREE.Mesh(
@@ -3817,6 +3859,37 @@ export class WorldScene {
         farmstead.name = "countryside-farmstead";
         farmstead.add(barn, barnRoof, silo, siloRoof);
         group.add(farmstead);
+      }
+    }
+    if (detail === "near" && this.assetLibrary.isReady) {
+      const landmarkIndex = Math.abs(chunk.index) % 13;
+      const landmarkKey: AssetKey | undefined =
+        landmarkIndex === 3
+          ? "windmill"
+          : landmarkIndex === 7
+            ? "water_tower"
+            : landmarkIndex === 11 && chunk.region.lakeside > 0.2
+              ? "covered_bridge"
+              : undefined;
+      if (landmarkKey) {
+        const landmarkDistance = chunk.startDistanceM + 165;
+        const landmarkRoad = this.generator.sample(landmarkDistance);
+        const landmarkSide = chunk.index % 2 === 0 ? 1 : -1;
+        const landmarkOffset = landmarkSide * 48;
+        const landmark = this.assetLibrary.instantiate(landmarkKey);
+        if (landmark) {
+          landmark.position.copy(
+            this.roadOffsetPosition(
+              landmarkRoad,
+              landmarkOffset,
+              this.terrainElevationAt(landmarkRoad, landmarkOffset) -
+                landmarkRoad.elevationM -
+                0.08,
+            ),
+          );
+          landmark.rotation.y = -landmarkRoad.heading;
+          group.add(landmark);
+        }
       }
     }
     return group;
@@ -4855,7 +4928,7 @@ export class WorldScene {
         );
       }),
     ];
-    const authoredStride = detail === "near" ? 4 : 8;
+    const authoredStride = detail === "near" ? 4 : 6;
     const authoredBuildings = this.assetLibrary.isReady
       ? allBuildings.filter((_, index) => index % authoredStride === 0)
       : [];
@@ -5684,7 +5757,7 @@ export class WorldScene {
             cityTreeKeys[index % cityTreeKeys.length]!,
           );
           if (!tree) continue;
-          tree.position.copy(this.roadOffsetPosition(road, offset, 0));
+          tree.position.copy(this.roadOffsetPosition(road, offset, -0.08));
           tree.rotation.y = treeRandom() * Math.PI * 2;
           tree.scale.setScalar(0.62 + treeRandom() * 0.22);
           group.add(tree);
@@ -5841,7 +5914,7 @@ export class WorldScene {
           tree.position.set(
             placement.road.x +
               Math.cos(placement.road.heading) * placement.offset,
-            placement.baseY,
+            placement.baseY - 0.12,
             placement.road.z +
               Math.sin(placement.road.heading) * placement.offset,
           );
@@ -5927,7 +6000,7 @@ export class WorldScene {
           tree.position.set(
             placement.road.x +
               Math.cos(placement.road.heading) * placement.offset,
-            placement.baseY,
+            placement.baseY - 0.12,
             placement.road.z +
               Math.sin(placement.road.heading) * placement.offset,
           );
@@ -6001,7 +6074,7 @@ export class WorldScene {
         if (!rocks) continue;
         rocks.position.set(
           ground.road.x + Math.cos(ground.road.heading) * ground.offset,
-          ground.baseY,
+          ground.baseY - 0.12,
           ground.road.z + Math.sin(ground.road.heading) * ground.offset,
         );
         rocks.rotation.y = rockRandom() * Math.PI;
@@ -6050,7 +6123,7 @@ export class WorldScene {
           if (!flowers) continue;
           flowers.position.set(
             ground.road.x + Math.cos(ground.road.heading) * ground.offset,
-            ground.baseY,
+            ground.baseY - 0.06,
             ground.road.z + Math.sin(ground.road.heading) * ground.offset,
           );
           flowers.rotation.y = flowerRandom() * Math.PI * 2;
@@ -6094,7 +6167,7 @@ export class WorldScene {
           if (!reeds) continue;
           reeds.position.set(
             ground.road.x + Math.cos(ground.road.heading) * ground.offset,
-            ground.baseY,
+            ground.baseY - 0.08,
             ground.road.z + Math.sin(ground.road.heading) * ground.offset,
           );
           reeds.rotation.y = reedRandom() * Math.PI * 2;
@@ -6138,7 +6211,8 @@ export class WorldScene {
         if (!prop) return;
         prop.position.set(
           ground.road.x + Math.cos(ground.road.heading) * ground.offset,
-          ground.baseY,
+          ground.baseY -
+            (key === "berry_bush" ? 0.08 : key === "fallen_log" ? 0.12 : 0.05),
           ground.road.z + Math.sin(ground.road.heading) * ground.offset,
         );
         prop.rotation.y = ruralRandom() * Math.PI * 2;
@@ -6188,7 +6262,13 @@ export class WorldScene {
             : fenceKeys[Math.abs(chunk.index) % fenceKeys.length]!,
         );
         if (!segment) continue;
-        segment.position.copy(this.roadOffsetPosition(road, side * 8.5, 0));
+        segment.position.copy(
+          this.roadOffsetPosition(
+            road,
+            side * 8.5,
+            this.terrainElevationAt(road, side * 8.5) - road.elevationM - 0.06,
+          ),
+        );
         segment.rotation.y = -road.heading + Math.PI / 2;
         segment.scale.x = CHUNK_LENGTH_M / segmentCount / 5;
         fence.add(segment);
@@ -6408,12 +6488,12 @@ export class WorldScene {
       roughness: 0.65,
     });
     const frameMaterial = new THREE.MeshStandardMaterial({
-      color: 0xc94e3f,
-      roughness: 0.4,
-      metalness: 0.25,
+      color: 0x2d8580,
+      roughness: 0.62,
+      metalness: 0.08,
     });
     const jersey = new THREE.MeshStandardMaterial({
-      color: 0xf0c855,
+      color: 0xe3aa32,
       roughness: 0.75,
     });
     const skin = new THREE.MeshStandardMaterial({
@@ -6421,7 +6501,7 @@ export class WorldScene {
       roughness: 0.9,
     });
     const shorts = new THREE.MeshStandardMaterial({
-      color: 0x263438,
+      color: 0x23706f,
       roughness: 0.8,
     });
     const metal = new THREE.MeshStandardMaterial({
@@ -6429,7 +6509,11 @@ export class WorldScene {
       roughness: 0.34,
       metalness: 0.72,
     });
-    const wheelGeometry = new THREE.TorusGeometry(0.64, 0.055, 8, 28);
+    const helmetMaterial = new THREE.MeshStandardMaterial({
+      color: 0xf06449,
+      roughness: 0.58,
+    });
+    const wheelGeometry = new THREE.TorusGeometry(0.64, 0.065, 10, 32);
     const rimGeometry = new THREE.TorusGeometry(0.58, 0.018, 6, 24);
     [-0.92, 0.92].forEach((z) => {
       const wheel = new THREE.Group();
@@ -6439,8 +6523,8 @@ export class WorldScene {
       tire.rotation.y = Math.PI / 2;
       rim.rotation.y = Math.PI / 2;
       wheel.add(tire, rim);
-      for (let index = 0; index < 8; index += 1) {
-        const angle = (index / 8) * Math.PI * 2;
+      for (let index = 0; index < 10; index += 1) {
+        const angle = (index / 10) * Math.PI * 2;
         const end = new THREE.Vector3(
           0,
           Math.sin(angle) * 0.56,
@@ -6463,7 +6547,7 @@ export class WorldScene {
     const addTube = (
       from: THREE.Vector3,
       to: THREE.Vector3,
-      radius = 0.045,
+      radius = 0.055,
     ): void => {
       const delta = to.clone().sub(from);
       const tube = new THREE.Mesh(
@@ -6506,15 +6590,31 @@ export class WorldScene {
     );
     bottle.position.set(0, 0.98, 0.02);
     bottle.rotation.x = -0.55;
-    this.cyclist.add(saddle, handlebar, bottle);
+    const chainring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.18, 0.025, 8, 24),
+      metal,
+    );
+    chainring.position.copy(crank);
+    chainring.rotation.y = Math.PI / 2;
+    const chainGuard = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.13, 0.13, 0.035, 24),
+      dark,
+    );
+    chainGuard.position.copy(crank).add(new THREE.Vector3(0.03, 0, 0));
+    chainGuard.rotation.z = Math.PI / 2;
+    this.cyclist.add(saddle, handlebar, bottle, chainring, chainGuard);
 
     const torso = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.25, 0.65, 5, 8),
+      new THREE.CapsuleGeometry(0.25, 0.4, 6, 10),
       jersey,
     );
-    torso.position.set(0, 1.82, 0.05);
+    torso.position.set(0, 1.78, 0.02);
     torso.rotation.x = -0.45;
     this.riderRig.add(torso);
+    const hips = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 8), shorts);
+    hips.scale.set(1.05, 0.62, 0.9);
+    hips.position.set(0, 1.53, 0.18);
+    this.riderRig.add(hips);
     const jerseyPanel = new THREE.Mesh(
       new THREE.BoxGeometry(0.2, 0.45, 0.025),
       frameMaterial,
@@ -6522,20 +6622,29 @@ export class WorldScene {
     jerseyPanel.position.set(0, 1.91, -0.18);
     jerseyPanel.rotation.x = -0.45;
     this.riderRig.add(jerseyPanel);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8), skin);
-    head.position.set(0, 2.25, -0.26);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.235, 16, 10), skin);
+    head.position.set(0, 2.18, -0.29);
     this.riderRig.add(head);
+    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.205, 14, 8), dark);
+    hair.scale.set(1, 0.75, 0.72);
+    hair.position.set(0, 2.25, -0.14);
+    this.riderRig.add(hair);
+    for (const side of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 7), skin);
+      ear.position.set(side * 0.22, 2.18, -0.28);
+      this.riderRig.add(ear);
+    }
     const helmet = new THREE.Mesh(
-      new THREE.SphereGeometry(0.215, 12, 6, 0, Math.PI * 2, 0, Math.PI * 0.58),
-      frameMaterial,
+      new THREE.SphereGeometry(0.255, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.58),
+      helmetMaterial,
     );
-    helmet.position.set(0, 2.29, -0.27);
+    helmet.position.set(0, 2.27, -0.28);
     this.riderRig.add(helmet);
     const helmetStripe = new THREE.Mesh(
       new THREE.BoxGeometry(0.045, 0.12, 0.32),
       jersey,
     );
-    helmetStripe.position.set(0, 2.39, -0.28);
+    helmetStripe.position.set(0, 2.4, -0.28);
     helmetStripe.rotation.x = -0.12;
     this.riderRig.add(helmetStripe);
     const addLimb = (
@@ -6603,7 +6712,12 @@ export class WorldScene {
       foot.position.y = -0.42;
       const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.09, 0.3), dark);
       shoe.position.set(0, -0.03, -0.08);
-      foot.add(shoe);
+      const sole = new THREE.Mesh(
+        new THREE.BoxGeometry(0.145, 0.035, 0.32),
+        new THREE.MeshStandardMaterial({ color: 0xe6dfcf, roughness: 0.88 }),
+      );
+      sole.position.set(0, -0.085, -0.08);
+      foot.add(shoe, sole);
       shin.add(foot);
       thigh.add(shin);
       this.riderRig.add(thigh);

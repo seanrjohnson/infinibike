@@ -156,6 +156,39 @@ def cylinder(parent, name, location, radius, depth, mat, tile=None, vertices=28,
     return finish(obj, parent, mat, tile, bevel)
 
 
+def beam(parent, name, start, end, radius, mat, vertices=20, bevel=0.025):
+    start_vector = Vector(start)
+    end_vector = Vector(end)
+    direction = end_vector - start_vector
+    obj = cylinder(
+        parent,
+        name,
+        (start_vector + end_vector) / 2,
+        radius,
+        direction.length,
+        mat,
+        vertices=vertices,
+        bevel=bevel,
+    )
+    obj.rotation_mode = "QUATERNION"
+    obj.rotation_quaternion = Vector((0, 1, 0)).rotation_difference(direction.normalized())
+    return obj
+
+
+def torus(parent, name, location, major_radius, minor_radius, mat, major_segments=36, minor_segments=10, rotation=(0, math.pi / 2, 0)):
+    bpy.ops.mesh.primitive_torus_add(
+        major_radius=major_radius,
+        minor_radius=minor_radius,
+        major_segments=major_segments,
+        minor_segments=minor_segments,
+        location=location,
+        rotation=rotation,
+    )
+    obj = bpy.context.object
+    obj.name = name
+    return finish(obj, parent, mat, bevel=0.015)
+
+
 def sphere(parent, name, location, scale, mat, tile=None, subdivisions=4):
     bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=subdivisions, radius=1, location=location)
     obj = bpy.context.object
@@ -272,7 +305,7 @@ def make_quadruped(collection, key, body_mat, size, head_scale, ears=True):
     sphere(asset, "body", (0, size * 0.95, 0.15), (size * 0.62, size * 0.55, size), body_mat, subdivisions=3)
     sphere(asset, "head", (0, size * 1.12, -size * 0.92), head_scale, body_mat, subdivisions=3)
     for index, (x, z) in enumerate(((-0.34, -0.45), (0.34, -0.45), (-0.34, 0.62), (0.34, 0.62))):
-        cylinder(asset, "left-leg" if x < 0 else "right-leg", (x * size, size * 0.39, z * size), size * 0.09, size * 0.76, body_mat, vertices=14)
+        cylinder(asset, f"{key}-left-leg" if x < 0 else f"{key}-right-leg", (x * size, size * 0.39, z * size), size * 0.09, size * 0.76, body_mat, vertices=14)
     if ears:
         for side in (-1, 1):
             cone(asset, "ear", (side * head_scale[0] * 0.78, size * 1.35, -size * 1.0), size * 0.14, 0.02, size * 0.42, body_mat, vertices=12)
@@ -301,11 +334,24 @@ def make_animals(collection):
         cylinder(raccoon, "tail-band", (0, 0.55, z), 0.14, 0.1, MAT["black"], vertices=10, rotation=(math.radians(65), 0, 0))
 
     dino = root(collection, "dinosaur")
-    sphere(dino, "body", (0, 3.6, 0.4), (1.25, 1.55, 3.0), MAT["dinosaur"], subdivisions=3)
-    sphere(dino, "head", (0, 5.4, -3.0), (1.1, 0.8, 1.45), MAT["dinosaur"], subdivisions=3)
-    cone(dino, "tail", (0, 3.6, 3.9), 1.0, 0.08, 5.7, MAT["dinosaur"], vertices=24, rotation=(0, 0, 0))
+    sphere(dino, "trex-body", (0, 3.7, 0.35), (1.45, 1.65, 2.85), MAT["dinosaur"], subdivisions=4)
+    sphere(dino, "trex-chest", (0, 4.25, -1.35), (1.2, 1.3, 1.5), MAT["dinosaur"], subdivisions=3)
+    sphere(dino, "trex-head", (0, 5.55, -3.05), (1.28, 1.02, 1.58), MAT["dinosaur"], subdivisions=4)
+    sphere(dino, "trex-muzzle", (0, 5.25, -4.1), (1.18, 0.55, 0.92), MAT["dinosaur"], subdivisions=3)
+    box(dino, "trex-mouth", (0, 5.08, -4.58), (1.72, 0.18, 0.52), MAT["cloth_rust"], bevel=0.09)
     for side in (-1, 1):
-        box(dino, "left-leg" if side < 0 else "right-leg", (side * 0.72, 1.65, 0.65), (0.65, 3.3, 0.78), MAT["dinosaur"], bevel=0.12)
+        sphere(dino, "trex-eye-white", (side * 0.7, 5.88, -4.02), (0.21, 0.25, 0.16), MAT["white"], subdivisions=3)
+        sphere(dino, "trex-eye", (side * 0.76, 5.9, -4.15), (0.08, 0.1, 0.055), MAT["black"], subdivisions=2)
+        thigh_name = "left-leg" if side < 0 else "right-leg"
+        sphere(dino, f"trex-{'left' if side < 0 else 'right'}-thigh", (side * 0.82, 2.35, 0.45), (0.68, 1.3, 0.82), MAT["dinosaur"], subdivisions=3)
+        leg = cylinder(dino, f"dinosaur-{thigh_name}", (side * 0.82, 1.05, -0.05), 0.38, 1.9, MAT["dinosaur"], vertices=28, bevel=0.1)
+        leg.rotation_euler = (-math.pi / 2, 0, side * math.radians(3))
+        box(dino, "trex-foot", (side * 0.82, 0.2, -0.62), (0.78, 0.34, 1.55), MAT["dinosaur"], bevel=0.16)
+        for toe in (-0.22, 0, 0.22):
+            cone(dino, "trex-toe", (side * 0.82 + toe, 0.16, -1.42), 0.1, 0.015, 0.4, MAT["black"], vertices=12, rotation=(0, 0, 0))
+        beam(dino, "trex-arm", (side * 0.78, 4.55, -2.0), (side * 1.0, 3.92, -2.7), 0.14, MAT["dinosaur"], vertices=18)
+    cone(dino, "trex-tail", (0, 3.7, 4.15), 1.12, 0.05, 6.8, MAT["dinosaur"], vertices=32, rotation=(0, 0, 0))
+    sphere(dino, "trex-belly", (0, 3.7, -1.2), (0.92, 1.15, 1.5), MAT["mustard"], subdivisions=3)
 
     dog = make_quadruped(collection, "dog", MAT["animal_tan"], 0.55, (0.24, 0.24, 0.28))
     cone(dog, "tail", (0, 0.76, 0.78), 0.11, 0.035, 0.8, MAT["animal_tan"], vertices=18, rotation=(math.radians(-35), 0, 0))
@@ -365,8 +411,8 @@ def make_person(collection, key, skin, coat, pose=0.0, accessory=None, height=1.
     for side in (-1, 1):
         sphere(asset, "eye", (side * 0.082, 1.99 * height, -0.205), (0.026, 0.032, 0.018), MAT["black"], subdivisions=2)
     for side in (-1, 1):
-        leg = cylinder(asset, "left-leg" if side < 0 else "right-leg", (side * 0.14, 0.5 * height, side * pose), 0.09, 0.95 * height, MAT["denim"], vertices=20)
-        arm = cylinder(asset, "left-arm" if side < 0 else "right-arm", (side * 0.38, 1.28 * height, -side * pose), 0.075, 0.85 * height, skin, vertices=20)
+        leg = cylinder(asset, f"{key}-left-leg" if side < 0 else f"{key}-right-leg", (side * 0.14, 0.5 * height, side * pose), 0.09, 0.95 * height, MAT["denim"], vertices=20)
+        arm = cylinder(asset, f"{key}-left-arm" if side < 0 else f"{key}-right-arm", (side * 0.38, 1.28 * height, -side * pose), 0.075, 0.85 * height, skin, vertices=20)
         arm.rotation_euler = (-math.pi / 2, 0, side * math.radians(10))
         box(asset, "shoe", (side * 0.14, 0.08, -0.09 + side * pose), (0.2, 0.14, 0.36), MAT["white"], bevel=0.07)
     box(asset, "jacket", (0, 1.35 * height, -0.03), (0.65, 0.78 * height, 0.46), coat, bevel=0.12)
@@ -530,6 +576,59 @@ def make_barn(collection):
     window(asset, 0, 6.4, -7.09, 1.5, 1.2)
 
 
+def make_rural_buildings(collection):
+    farmhouse = root(collection, "farmhouse")
+    box(farmhouse, "farmhouse-body", (0, 2.8, 0), (9.2, 5.6, 7.4), MAT["mustard"], bevel=0.11)
+    gable_roof(farmhouse, 9.9, 8.1, 5.48, MAT["blue"])
+    box(farmhouse, "farmhouse-porch", (0, 0.38, -4.45), (8.2, 0.4, 2.1), MAT["wood"], bevel=0.08)
+    box(farmhouse, "farmhouse-porch-roof", (0, 3.05, -4.5), (8.5, 0.3, 2.3), MAT["blue"], bevel=0.06)
+    for x in (-3.65, 3.65):
+        cylinder(farmhouse, "porch-post", (x, 1.62, -4.55), 0.11, 2.55, MAT["white"], vertices=16)
+    door(farmhouse, 0, 1.35, -3.78, 1.25, 2.45, MAT["red"])
+    for x in (-2.8, 2.8):
+        window(farmhouse, x, 2.35, -3.78, 1.3, 1.55)
+    box(farmhouse, "chimney", (3.1, 6.65, 1.1), (0.9, 3.0, 0.9), MAT["red_brick"], bevel=0.06)
+
+    stand = root(collection, "produce_stand")
+    box(stand, "stand-counter", (0, 0.72, 0), (5.3, 1.25, 2.5), MAT["wood"], bevel=0.1)
+    for x in (-2.3, 2.3):
+        cylinder(stand, "stand-post", (x, 2.0, 0.55), 0.1, 3.3, MAT["wood"], vertices=16)
+    box(stand, "stand-roof", (0, 3.55, 0.2), (5.9, 0.3, 3.3), MAT["red"], bevel=0.12)
+    for index, mat in enumerate((MAT["red"], MAT["white"], MAT["red"], MAT["white"], MAT["red"])):
+        box(stand, "awning-stripe", ((index - 2) * 1.05, 3.38, -1.48), (1.0, 0.16, 0.32), mat, bevel=0.04)
+    for x, mat in ((-1.65, MAT["leaf"]), (-0.55, MAT["red"]), (0.55, MAT["gold"]), (1.65, MAT["leaf_light"])):
+        box(stand, "produce-crate", (x, 1.28, -1.0), (0.92, 0.65, 0.75), MAT["wood"], bevel=0.07)
+        for offset in (-0.22, 0, 0.22):
+            sphere(stand, "produce", (x + offset, 1.65, -1.28), (0.12, 0.12, 0.12), mat, subdivisions=2)
+
+    bridge = root(collection, "covered_bridge")
+    box(bridge, "bridge-deck", (0, 0.35, 0), (7.5, 0.55, 12.0), MAT["wood"], bevel=0.09)
+    for x in (-3.35, 3.35):
+        box(bridge, "bridge-wall", (x, 2.75, 0), (0.45, 5.0, 12.0), MAT["red"], bevel=0.07)
+        for z in (-4.3, -1.45, 1.45, 4.3):
+            beam(bridge, "bridge-brace", (x, 0.7, z - 1.1), (x, 4.65, z + 1.1), 0.12, MAT["wood"], vertices=16)
+    gable_roof(bridge, 8.3, 12.8, 5.15, MAT["blue"])
+
+    windmill = root(collection, "windmill")
+    for side in (-1, 1):
+        beam(windmill, "windmill-leg", (side * 1.4, 0.1, 0), (side * 0.38, 6.8, 0), 0.16, MAT["wood"], vertices=18)
+    for y in (1.8, 3.7, 5.5):
+        box(windmill, "windmill-crossbar", (0, y, 0), (2.5 - y * 0.18, 0.18, 0.18), MAT["wood"], bevel=0.04)
+    cylinder(windmill, "windmill-hub", (0, 7.05, -0.2), 0.36, 0.42, MAT["metal"], vertices=28, rotation=(0, 0, 0))
+    for angle in range(0, 360, 45):
+        radians = math.radians(angle)
+        beam(windmill, "windmill-blade", (math.cos(radians) * 0.35, 7.05 + math.sin(radians) * 0.35, -0.42), (math.cos(radians) * 2.25, 7.05 + math.sin(radians) * 2.25, -0.42), 0.11, MAT["metal"], vertices=14)
+    box(windmill, "windmill-tail", (2.1, 7.05, 0.35), (2.8, 1.2, 0.15), MAT["red"], bevel=0.08)
+
+    tower = root(collection, "water_tower")
+    for x in (-1.55, 1.55):
+        for z in (-1.55, 1.55):
+            beam(tower, "tower-leg", (x, 0.1, z), (x * 0.72, 5.0, z * 0.72), 0.15, MAT["wood"], vertices=16)
+    cylinder(tower, "water-tank", (0, 6.75, 0), 2.25, 3.2, MAT["mustard"], vertices=32, bevel=0.1)
+    cone(tower, "water-tower-roof", (0, 8.72, 0), 2.45, 0.15, 1.15, MAT["blue"], vertices=32)
+    box(tower, "tower-platform", (0, 5.18, 0), (5.1, 0.25, 5.1), MAT["wood"], bevel=0.06)
+
+
 def make_silo(collection):
     asset = root(collection, "silo")
     cylinder(asset, "silo-body", (0, 5.0, 0), 2.5, 10.0, MAT["concrete"], "concrete", 20)
@@ -642,12 +741,15 @@ def make_rural_assets(collection):
         box(stump, "stump-root", (math.cos(radians) * 0.5, 0.14, math.sin(radians) * 0.5), (0.25, 0.25, 0.9), MAT["bark"], bevel=0.09, rotation=(0, -radians, 0))
 
     gate = root(collection, "farm_gate")
-    for x in (-2.2, 2.2):
-        box(gate, "gate-post", (x, 1.0, 0), (0.28, 2.0, 0.28), MAT["wood"], bevel=0.07)
-    for y in (0.45, 1.0, 1.55):
-        box(gate, "gate-rail", (0, y, 0), (4.2, 0.16, 0.16), MAT["wood"], bevel=0.05)
-    for side in (-1, 1):
-        box(gate, "gate-brace", (0, 1.0, side * 0.02), (0.15, 4.2, 0.15), MAT["wood"], bevel=0.04, rotation=(0, 0, side * math.radians(62)))
+    for x in (-2.55, 2.55):
+        box(gate, "gate-post", (x, 1.2, 0), (0.42, 2.4, 0.42), MAT["wood"], bevel=0.1)
+        cone(gate, "gate-post-cap", (x, 2.55, 0), 0.3, 0.06, 0.42, MAT["wood"], vertices=12)
+    for y in (0.42, 0.78, 1.14, 1.5, 1.86):
+        box(gate, "gate-rail", (-0.12, y, -0.02), (4.55, 0.18, 0.2), MAT["wood"], bevel=0.055)
+    box(gate, "gate-brace", (-0.12, 1.14, -0.14), (0.2, 4.85, 0.2), MAT["wood"], bevel=0.05, rotation=(0, 0, math.radians(-65)))
+    for y in (0.58, 1.65):
+        box(gate, "gate-hinge", (-2.31, y, -0.2), (0.42, 0.18, 0.16), MAT["black"], bevel=0.04)
+    box(gate, "gate-latch", (2.18, 1.18, -0.2), (0.55, 0.14, 0.14), MAT["black"], bevel=0.035)
 
     picnic = root(collection, "picnic_table")
     box(picnic, "table-top", (0, 1.05, 0), (2.8, 0.18, 1.05), MAT["wood"], bevel=0.08)
@@ -703,9 +805,9 @@ def make_aircraft(collection):
 
 
 def consolidate_asset(asset):
-    animated_names = {"left-leg", "right-leg", "left-arm", "right-arm", "rotor", "tail-rotor"}
+    animated_names = ("left-leg", "right-leg", "left-arm", "right-arm", "rotor", "tail-rotor")
     meshes = [child for child in asset.children_recursive if child.type == "MESH"]
-    static_meshes = [mesh for mesh in meshes if mesh.name not in animated_names]
+    static_meshes = [mesh for mesh in meshes if not any(name in mesh.name for name in animated_names)]
     material_groups = {}
     for mesh in static_meshes:
         material_name = mesh.data.materials[0].name if mesh.data.materials else "unmaterialed"
@@ -769,6 +871,7 @@ def build_library():
     make_civic_building(collection, "church", "church")
     make_barn(collection)
     make_silo(collection)
+    make_rural_buildings(collection)
     make_street_assets(collection)
     make_rural_assets(collection)
     make_aircraft(collection)

@@ -46,6 +46,11 @@ export type AssetKey =
   | "church"
   | "barn"
   | "silo"
+  | "farmhouse"
+  | "produce_stand"
+  | "covered_bridge"
+  | "windmill"
+  | "water_tower"
   | "bench"
   | "streetlamp"
   | "fire_hydrant"
@@ -87,6 +92,11 @@ export const ASSET_BASE_DIMENSIONS: Partial<
   school: [16, 7.8, 10],
   fire_station: [13.5, 12, 10],
   church: [8.8, 15.8, 12.8],
+  farmhouse: [9.9, 8.2, 9.6],
+  produce_stand: [5.9, 3.7, 3.3],
+  covered_bridge: [8.3, 6.2, 12.8],
+  windmill: [5, 9.3, 1.5],
+  water_tower: [5.1, 9.3, 5.1],
   car_sedan: [1.9, 1.65, 4.2],
   car_van: [1.9, 2.1, 4.7],
   car_hatchback: [1.9, 1.75, 3.7],
