@@ -12,6 +12,14 @@ The ride view includes close chase, wide chase, and handlebar cameras with selec
 
 Completed rides retain one-second local samples for power and grade charts, FTP effort-zone time, sustained power bests, 7/30-day totals, and CSV export. Older stored summaries remain readable without a migration step.
 
+## Built with Codex and GPT-5.6
+
+Infinibike was developed over a weekend with OpenAI Codex and GPT-5.6. The project began in Codex's Plan mode with FlyBike as a reference for Bluetooth trainer integration and several open-source Three.js projects as rendering references. Most implementation used GPT-5.6 Sol at medium or high reasoning effort, with one session using Ultra reasoning effort.
+
+Codex used the Playwright test suite to exercise desktop and mobile flows, inspect renderer diagnostics, and capture screenshots for its own visual feedback. Manual screenshots of terrain seams, intersections, floating scenery, camera problems, and other graphical glitches provided additional focused input for debugging. Deterministic world seeds made those problems repeatable during development and regression testing.
+
+For the authored 3D asset library, Codex first used its image-generation tool to create modeling reference sheets, then worked through a Blender MCP integration to build and export the models in `public/assets/models/infinibike-assets.glb`. This image-reference-to-Blender workflow produced the buildings, vehicles, vegetation, characters, animals, and rider assets used alongside the procedurally constructed Three.js scenery.
+
 ## Browser and hardware support
 
 - Trainer mode: Chrome or Edge on desktop/Android, HTTPS or localhost, and an FTMS trainer that reports Indoor Bike Data.
