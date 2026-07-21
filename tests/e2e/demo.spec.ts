@@ -121,15 +121,3 @@ test("completes a demo ride and stores its summary", async ({ page }) => {
   await expect(page.getByText("e2e-road")).toBeVisible();
   await expect(page.getByText("Last 7 days")).toBeVisible();
 });
-
-test("configuration fits a mobile viewport", async ({ page }) => {
-  await page.goto("/?e2e=1");
-  await page.getByRole("button", { name: "Ride with keys or touch" }).click();
-  const heading = page.getByRole("heading", { name: "Shape your ride" });
-  await expect(heading).toBeVisible();
-  const box = await heading.boundingBox();
-  expect(box).not.toBeNull();
-  expect(box!.x + box!.width).toBeLessThanOrEqual(
-    await page.evaluate(() => innerWidth),
-  );
-});

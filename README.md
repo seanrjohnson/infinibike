@@ -35,6 +35,11 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
+`npm run test:e2e` runs the full local Playwright suite, including authored
+scenery and optional visual-QA cases. CI uses `npm run test:e2e:ci` for the
+desktop ride and mobile layout smoke tests after linting, unit tests, and the
+production build have passed.
+
 ## Architecture
 
 - `src/trainer/` normalizes demo and FTMS Bluetooth telemetry and owns acknowledged load commands.
