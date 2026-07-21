@@ -4928,7 +4928,7 @@ export class WorldScene {
         );
       }),
     ];
-    const authoredStride = detail === "near" ? 4 : 6;
+    const authoredStride = detail === "near" ? 3 : 5;
     const authoredBuildings = this.assetLibrary.isReady
       ? allBuildings.filter((_, index) => index % authoredStride === 0)
       : [];

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 
 export type AssetKey =
   | "tree_oak"
@@ -118,6 +119,36 @@ export class AssetLibrary {
       .loadAsync(url)
       .then(({ scene }) => {
         scene.traverse((object) => {
+          if (object instanceof THREE.Mesh) {
+            if (
+              /(LeafSage|LeafSunlit|LeafAutumn|FloweringPink)$/.test(
+                object.name,
+              )
+            ) {
+              const weldedGeometry = object.geometry.clone();
+              weldedGeometry.deleteAttribute("normal");
+              weldedGeometry.deleteAttribute("tangent");
+              object.geometry = mergeVertices(weldedGeometry, 0.0001);
+            }
+            object.geometry.computeVertexNormals();
+            object.geometry.normalizeNormals();
+            const materials = Array.isArray(object.material)
+              ? object.material
+              : [object.material];
+            for (const material of materials) {
+              if (
+                material instanceof THREE.MeshStandardMaterial ||
+                material instanceof THREE.MeshLambertMaterial ||
+                material instanceof THREE.MeshPhongMaterial
+              ) {
+                material.flatShading = false;
+              }
+              if (material instanceof THREE.MeshStandardMaterial) {
+                material.roughness = Math.max(material.roughness, 0.72);
+              }
+              material.needsUpdate = true;
+            }
+          }
           if (!object.name.startsWith(ASSET_PREFIX)) return;
           const key = object.name.slice(ASSET_PREFIX.length) as AssetKey;
           this.templates.set(key, object);

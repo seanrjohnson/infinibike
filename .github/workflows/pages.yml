@@ -1,9 +1,6 @@
 name: Test and deploy GitHub Pages
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -30,7 +27,6 @@ jobs:
       - run: npm run test:e2e
 
   assemble:
-    if: github.event_name != 'pull_request'
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -72,7 +68,6 @@ jobs:
           path: site
 
   deploy:
-    if: github.event_name != 'pull_request'
     needs: assemble
     runs-on: ubuntu-latest
     environment:

@@ -195,13 +195,18 @@ def sphere(parent, name, location, scale, mat, tile=None, subdivisions=4):
     obj.name = name
     obj.scale = scale
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    for polygon in obj.data.polygons:
+        polygon.use_smooth = True
     return finish(obj, parent, mat, tile, 0.04)
 
 
-def cone(parent, name, location, radius1, radius2, depth, mat, tile=None, vertices=28, rotation=(-math.pi / 2, 0, 0)):
+def cone(parent, name, location, radius1, radius2, depth, mat, tile=None, vertices=28, rotation=(-math.pi / 2, 0, 0), smooth_sides=False):
     bpy.ops.mesh.primitive_cone_add(vertices=vertices, radius1=radius1, radius2=radius2, depth=depth, location=location, rotation=rotation)
     obj = bpy.context.object
     obj.name = name
+    if smooth_sides:
+        for polygon in obj.data.polygons:
+            polygon.use_smooth = len(polygon.vertices) <= 4
     return finish(obj, parent, mat, tile, 0.03)
 
 
@@ -250,7 +255,7 @@ def make_tree(collection, key, pine=False, broad=False):
     if pine:
         cylinder(asset, "trunk", (0, 2.0, 0), 0.3, 4.0, MAT["bark"], vertices=24)
         for index, (y, radius) in enumerate(((2.7, 2.45), (3.8, 2.15), (4.9, 1.78), (5.9, 1.35), (6.75, 0.85))):
-            cone(asset, f"pine-crown-{index}", (0, y, 0), radius, 0.08, 2.45, MAT["pine"], vertices=32)
+            cone(asset, f"pine-crown-{index}", (0, y, 0), radius, 0.08, 2.45, MAT["pine"], vertices=32, smooth_sides=True)
     else:
         cylinder(asset, "trunk", (0, 2.0, 0), 0.42 if broad else 0.34, 4.0, trunk_mat, vertices=28)
         for angle in range(0, 360, 72):

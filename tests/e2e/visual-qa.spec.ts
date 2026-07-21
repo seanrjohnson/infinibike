@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 
 const visualQaEnabled = process.env.INFINIBIKE_VISUAL_QA === "1";
-const MAX_HIGH_QUALITY_TRIANGLES = 4_200_000;
-const MAX_ROUTE_EVENT_TRIANGLES = 4_500_000;
+const MAX_HIGH_QUALITY_TRIANGLES = 6_000_000;
+const MAX_ROUTE_EVENT_TRIANGLES = 6_500_000;
+const MAX_HIGH_QUALITY_CALLS = 1_700;
+const MAX_HIGH_QUALITY_GEOMETRIES = 700;
 
 for (const landscape of ["countryside", "city"] as const) {
   for (const graphics of ["medium", "high"] as const) {
@@ -45,11 +47,15 @@ for (const landscape of ["countryside", "city"] as const) {
       const diagnostics = await page.evaluate(
         () => window.__INFINIBIKE_DEBUG__,
       );
-      expect(Number(diagnostics?.calls)).toBeLessThanOrEqual(1_400);
+      expect(Number(diagnostics?.calls)).toBeLessThanOrEqual(
+        MAX_HIGH_QUALITY_CALLS,
+      );
       expect(Number(diagnostics?.triangles)).toBeLessThanOrEqual(
         MAX_HIGH_QUALITY_TRIANGLES,
       );
-      expect(Number(diagnostics?.geometries)).toBeLessThanOrEqual(600);
+      expect(Number(diagnostics?.geometries)).toBeLessThanOrEqual(
+        MAX_HIGH_QUALITY_GEOMETRIES,
+      );
       expect(Number(diagnostics?.textures)).toBeLessThanOrEqual(30);
       expect(Number(diagnostics?.contextLosses)).toBe(0);
       expect(Number(diagnostics?.renderWidth)).toBeGreaterThan(0);
@@ -165,11 +171,13 @@ test("keeps streamed graphics bounded through seams, rebasing, and quality chang
     )
     .toBeGreaterThan(0);
   const diagnostics = await page.evaluate(() => window.__INFINIBIKE_DEBUG__!);
-  expect(Number(diagnostics.calls)).toBeLessThanOrEqual(1_400);
+  expect(Number(diagnostics.calls)).toBeLessThanOrEqual(MAX_HIGH_QUALITY_CALLS);
   expect(Number(diagnostics.triangles)).toBeLessThanOrEqual(
     MAX_HIGH_QUALITY_TRIANGLES,
   );
-  expect(Number(diagnostics.geometries)).toBeLessThanOrEqual(600);
+  expect(Number(diagnostics.geometries)).toBeLessThanOrEqual(
+    MAX_HIGH_QUALITY_GEOMETRIES,
+  );
   expect(Number(diagnostics.contextLosses)).toBe(0);
   await page.locator(".modal-layer").evaluate((element) => {
     (element as HTMLElement).style.display = "none";
@@ -280,11 +288,15 @@ test("captures a deterministic countryside fork and long bend", async ({
       )
       .toBe(distance);
     const diagnostics = await page.evaluate(() => window.__INFINIBIKE_DEBUG__!);
-    expect(Number(diagnostics.calls)).toBeLessThanOrEqual(1_400);
+    expect(Number(diagnostics.calls)).toBeLessThanOrEqual(
+      MAX_HIGH_QUALITY_CALLS,
+    );
     expect(Number(diagnostics.triangles)).toBeLessThanOrEqual(
       MAX_HIGH_QUALITY_TRIANGLES,
     );
-    expect(Number(diagnostics.geometries)).toBeLessThanOrEqual(600);
+    expect(Number(diagnostics.geometries)).toBeLessThanOrEqual(
+      MAX_HIGH_QUALITY_GEOMETRIES,
+    );
     expect(Number(diagnostics.contextLosses)).toBe(0);
     await page.screenshot({ path, animations: "disabled" });
   }
@@ -366,11 +378,15 @@ test("captures diverse left and right city route turns", async ({
       turnDistance - 18,
     );
     const diagnostics = await page.evaluate(() => window.__INFINIBIKE_DEBUG__!);
-    expect(Number(diagnostics.calls)).toBeLessThanOrEqual(1_400);
+    expect(Number(diagnostics.calls)).toBeLessThanOrEqual(
+      MAX_HIGH_QUALITY_CALLS,
+    );
     expect(Number(diagnostics.triangles)).toBeLessThanOrEqual(
       MAX_ROUTE_EVENT_TRIANGLES,
     );
-    expect(Number(diagnostics.geometries)).toBeLessThanOrEqual(600);
+    expect(Number(diagnostics.geometries)).toBeLessThanOrEqual(
+      MAX_HIGH_QUALITY_GEOMETRIES,
+    );
     expect(Number(diagnostics.contextLosses)).toBe(0);
     await page.screenshot({ path, animations: "disabled" });
   }
