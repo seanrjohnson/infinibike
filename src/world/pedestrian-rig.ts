@@ -5,14 +5,15 @@ export function animatePedestrian(
   root: THREE.Object3D,
   distance: number,
   phase: number,
+  stationary = false,
 ): void {
   root.traverse((object) => {
     const joint = object.userData.walkJoint as string | undefined;
     if (!joint) return;
     const side = joint.startsWith("left") ? 0 : 0.5;
     const pose = walkingLeg(
-      distance,
-      phase + side,
+      stationary ? 0 : distance,
+      stationary ? 0.3 : phase + side,
       Number(object.userData.walkHeight ?? 1),
     );
     object.rotation.x = joint.endsWith("hip")
@@ -21,7 +22,9 @@ export function animatePedestrian(
         ? pose.knee
         : joint.endsWith("ankle")
           ? pose.ankle
-          : -pose.hip * 0.65;
+          : stationary
+            ? 0
+            : -pose.hip * 0.65;
   });
 }
 

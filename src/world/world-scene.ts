@@ -1,3 +1,5 @@
+import { streetTravel } from "./city-traffic";
+import { createCityCyclist, animateCityCyclist } from "./city-cyclist";
 import { stableShadowTarget } from "./shadow-stability";
 import * as THREE from "three";
 import {
@@ -58,6 +60,7 @@ type ActiveChunk = {
 type MovingActorKind =
   | "car"
   | "pedestrian"
+  | "cyclist"
   | "cow"
   | "sheep"
   | "raccoon"
@@ -995,6 +998,17 @@ export class WorldScene {
           direction,
         );
       }
+      for (let index = 0; index < 3; index += 1) {
+        const direction = index % 2 === 0 ? 1 : -1;
+        add(
+          "cyclist",
+          75 + index * 230,
+          820,
+          direction,
+          3.5 + random() * 2,
+          direction,
+        );
+      }
       for (let index = 0; index < 8; index += 1) {
         const direction: -1 | 1 = index % 3 === 0 ? -1 : 1;
         add(
@@ -1078,6 +1092,10 @@ export class WorldScene {
   ): THREE.Group {
     if (kind === "sky-birds" || kind === "takeoff-flock")
       return this.createBirdFlock(kind === "sky-birds" ? 7 : 11, random);
+    if (kind === "cyclist")
+      return createCityCyclist(
+        [0xb66b4e, 0x447f9b, 0xa08d45][Math.floor(random() * 3)]!,
+      );
     const personKeys = [
       "person_a",
       "person_b",
@@ -1285,10 +1303,48 @@ export class WorldScene {
 
   private animateMovingScenery(dt: number): void {
     for (const actor of this.movingActors) {
-      if (actor.kind === "car" || actor.kind === "pedestrian") {
+      if (
+        actor.kind === "car" ||
+        actor.kind === "pedestrian" ||
+        actor.kind === "cyclist"
+      ) {
+        let travel = streetTravel(
+          this.settings.seed,
+          actor.kind,
+          actor.routeDistanceM,
+          actor.direction,
+          actor.speedMps,
+          this.elapsed,
+          dt,
+        );
+        for (const other of this.movingActors) {
+          if (
+            other === actor ||
+            other.kind !== actor.kind ||
+            other.direction !== actor.direction ||
+            other.side !== actor.side
+          )
+            continue;
+          const gap =
+            actor.direction * (other.routeDistanceM - actor.routeDistanceM);
+          if (gap > 0)
+            travel = Math.min(
+              travel,
+              Math.max(
+                0,
+                gap -
+                  (actor.kind === "car"
+                    ? 6
+                    : actor.kind === "cyclist"
+                      ? 3
+                      : 1.2),
+              ),
+            );
+        }
+        actor.object.userData.walkStopped = dt > 0 && travel < 0.00001;
         actor.object.userData.walkDistance =
-          Number(actor.object.userData.walkDistance ?? 0) + actor.speedMps * dt;
-        actor.routeDistanceM += actor.direction * actor.speedMps * dt;
+          Number(actor.object.userData.walkDistance ?? 0) + travel;
+        actor.routeDistanceM += actor.direction * travel;
         const minimum = Math.max(0, this.rideDistanceM - 180);
         actor.routeDistanceM =
           minimum +
@@ -1321,7 +1377,9 @@ export class WorldScene {
     const offset =
       actor.kind === "car"
         ? actor.direction * 1.72
-        : actor.side * (9.5 + Math.sin(actor.phase) * 0.35);
+        : actor.kind === "cyclist"
+          ? actor.direction * 4.8
+          : actor.side * (9.5 + Math.sin(actor.phase) * 0.35);
     const acrossX = Math.cos(road.heading);
     const acrossZ = Math.sin(road.heading);
     actor.object.visible =
@@ -1334,11 +1392,17 @@ export class WorldScene {
     );
     actor.object.rotation.y =
       -road.heading + (actor.direction < 0 ? Math.PI : 0);
+    if (actor.kind === "cyclist")
+      animateCityCyclist(
+        actor.object,
+        Number(actor.object.userData.walkDistance ?? 0),
+      );
     if (actor.kind === "pedestrian") {
       animatePedestrian(
         actor.object,
         Number(actor.object.userData.walkDistance ?? 0),
         actor.phase / (Math.PI * 2),
+        actor.object.userData.walkStopped === true,
       );
     }
     this.hideActorIfItIntersectsCamera(actor.object);

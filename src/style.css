@@ -480,26 +480,6 @@ select:focus {
   font-size: 0.73rem;
   font-weight: 700;
 }
-.climbing-indicator {
-  position: absolute;
-  left: 50%;
-  bottom: max(1rem, env(safe-area-inset-bottom));
-  display: grid;
-  min-width: 7.5rem;
-  padding: 0.55rem 0.8rem;
-  transform: translateX(-50%);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 6px;
-  background: rgba(17, 29, 29, 0.82);
-  backdrop-filter: blur(10px);
-  text-align: center;
-}
-.climbing-indicator span {
-  color: #9eb0ac;
-  font-size: 0.58rem;
-  font-weight: 800;
-  text-transform: uppercase;
-}
 .climbing-indicator strong {
   color: #f1c75b;
   font-size: 1.1rem;
@@ -559,7 +539,7 @@ select:focus {
   margin: 0;
 }
 .route-preview.collapsed {
-  width: 11.5rem;
+  width: min(11.5rem, 48vw);
   padding-bottom: 0.6rem;
 }
 .route-preview.collapsed header {
@@ -609,7 +589,8 @@ select:focus {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.35rem 1rem;
-  width: min(21rem, calc(100vw - 12rem));
+  width: max-content;
+  max-width: min(21rem, calc(100vw - 12rem));
   padding: 0.55rem 0.7rem;
   transform: translateX(-50%);
   border-radius: 5px;
@@ -627,6 +608,9 @@ select:focus {
 .ride-target {
   color: #a9b9b6;
   font-size: 0.58rem;
+}
+.ride-target:empty {
+  display: none;
 }
 .ride-target {
   align-self: center;
@@ -847,6 +831,18 @@ select:focus {
   padding: 4rem;
 }
 
+@media (min-width: 761px) and (max-width: 1100px) {
+  .ride-objective {
+    top: calc(max(1rem, env(safe-area-inset-top)) + 3.5rem);
+    left: 1rem;
+    max-width: calc(100vw - 24rem);
+    transform: none;
+  }
+  .connection-badge {
+    display: none;
+  }
+}
+
 @media (max-width: 760px) {
   .setup-shell,
   .history-shell,
@@ -877,15 +873,8 @@ select:focus {
     right: 0.5rem;
     bottom: max(0.5rem, env(safe-area-inset-bottom));
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     min-height: 3.8rem;
-  }
-  .climbing-indicator {
-    left: 0.5rem;
-    bottom: max(4.8rem, calc(env(safe-area-inset-bottom) + 4.8rem));
-    min-width: 6.5rem;
-    padding: 0.4rem 0.55rem;
-    transform: none;
   }
   .hud > div {
     min-width: 0;
@@ -912,15 +901,19 @@ select:focus {
   .route-preview {
     top: max(0.5rem, env(safe-area-inset-top));
     right: 0.5rem;
-    width: min(18rem, calc(100vw - 8rem));
+    width: min(18rem, 48vw);
     padding: 0.45rem 0.5rem 0.35rem;
   }
   .route-preview canvas {
     height: 3.5rem;
   }
   .ride-objective {
-    top: calc(max(0.5rem, env(safe-area-inset-top)) + 6.35rem);
-    width: min(18rem, calc(100vw - 8rem));
+    top: max(0.5rem, env(safe-area-inset-top));
+    left: 4rem;
+    width: max-content;
+    max-width: calc(52vw - 5rem);
+    grid-template-columns: minmax(0, 1fr);
+    transform: none;
   }
   .demo-power-control {
     right: 0.5rem;
@@ -964,4 +957,23 @@ select:focus {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.compact-hud .hud > div:nth-child(3),
+.compact-hud .hud > div:nth-child(4),
+.compact-hud .climbing-indicator,
+.compact-hud #ride-instruction,
+.compact-hud .goal-progress,
+.compact-hud .connection-badge {
+  display: none;
+}
+.compact-hud .hud {
+  right: auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.compact-hud .route-preview canvas {
+  height: 2rem;
+}
+.compact-hud .hud > div {
+  min-width: 5rem;
 }

@@ -1,4 +1,13 @@
 import {
+  loadRidePreferences,
+  PREFERENCES_KEY,
+  writeStored,
+  lastTrainer,
+  rememberedLoad,
+  normalizeRidePreferences,
+  type RidePreferences,
+} from "./domain/ride-preferences";
+import {
   Bluetooth,
   Camera,
   MoveHorizontal,
@@ -155,6 +164,7 @@ export class InfinibikeApp {
   private snapshot?: RideSnapshot;
   private rideStartedAt?: Date;
   private lastSummary?: RideSummary;
+  private pendingReplay = false;
   private gameActive = false;
   private paused = false;
   private latestTelemetry: TelemetrySample = {
@@ -166,6 +176,7 @@ export class InfinibikeApp {
   private demoPressed = false;
   private demoPowerW = 120;
   private routePreviewCollapsed = false;
+  private compactHud = false;
   private terrainScale = 0;
   private baseLoad?: number;
   private loadBusy = false;
@@ -179,7 +190,11 @@ export class InfinibikeApp {
     private readonly root: HTMLElement,
     canvas: HTMLCanvasElement,
   ) {
+    Object.assign(this, loadRidePreferences(this.cameraSettings.reducedMotion));
     this.world = new WorldScene(canvas);
+    this.world.configure(this.environment);
+    this.world.setCameraSettings(this.cameraSettings);
+    this.persistPreferences();
     this.world.setFrameHandler((dt) => this.update(dt));
     this.installGlobalInput();
     this.showHome();
@@ -189,7 +204,36 @@ export class InfinibikeApp {
     });
   }
 
+  private rememberBaseline(): void {
+    const control = this.source?.getLoadControl();
+    const id = this.source?.getStatus().deviceId;
+    if (control && id && this.baseLoad !== undefined)
+      writeStored(`infinibike.load.v1:${id}`, {
+        mode: control.mode,
+        value: this.baseLoad,
+      });
+  }
+
+  private currentPreferences(): RidePreferences {
+    return {
+      environment: this.environment,
+      rideMode: this.rideMode,
+      ridePhysics: this.ridePhysics,
+      cameraSettings: this.cameraSettings,
+      audioEnabled: this.audioEnabled,
+      terrainScale: this.terrainScale,
+      compactHud: this.compactHud,
+      routePreviewCollapsed: this.routePreviewCollapsed,
+    };
+  }
+
+  private persistPreferences(): void {
+    writeStored(PREFERENCES_KEY, this.currentPreferences());
+  }
+
   private showHome(): void {
+    const remembered = lastTrainer();
+    const saved = remembered ? loadCalibration(remembered.id) : undefined;
     this.view = "home";
     this.gameActive = false;
     this.world.setRealtime(false);
@@ -200,7 +244,8 @@ export class InfinibikeApp {
           <p class="eyebrow">Endless indoor cycling</p>
           <h1 id="brand-title">Infinibike</h1>
           <p class="lead">A new road every ride.</p>
-          ${this.profile ? `<div class="calibration-ready"><span>Saved effort profile</span><strong>${this.profile.cruisePowerW} W cruise ? ${this.profile.hardPowerW} W hard</strong></div>` : ""}
+          ${this.profile && !remembered ? `<div class="calibration-ready"><span>Saved effort profile</span><strong>${this.profile.cruisePowerW} W cruise &middot; ${this.profile.hardPowerW} W hard</strong></div>` : ""}
+          ${remembered ? `<div class="calibration-ready"><span>${escapeHtml(remembered.name)}</span><strong>${saved ? `${saved.cruisePowerW} W cruise / ${saved.hardPowerW} W hard` : "Ready to reconnect"}</strong></div><button id="reconnect" class="primary">Reconnect ${escapeHtml(remembered.name)}</button>` : ""}
           <div class="primary-stack">
             <button id="connect" class="primary"><i data-lucide="bluetooth"></i>Connect smart trainer</button>
             <button id="demo"><i data-lucide="keyboard"></i>Ride with keys or touch</button>
@@ -214,6 +259,9 @@ export class InfinibikeApp {
     `;
     this.icons();
     this.root
+      .querySelector("#reconnect")
+      ?.addEventListener("click", () => void this.connectTrainer(true));
+    this.root
       .querySelector("#connect")
       ?.addEventListener("click", () => void this.connectTrainer());
     this.root
@@ -224,15 +272,34 @@ export class InfinibikeApp {
       ?.addEventListener("click", () => this.showHistory());
   }
 
-  private async connectTrainer(): Promise<void> {
-    const source = new FtmsBluetoothSource();
+  private async connectTrainer(reconnect = false): Promise<void> {
+    const source = new FtmsBluetoothSource(
+      reconnect ? lastTrainer()?.id : undefined,
+    );
     await this.setSource(source);
     this.showConnecting(source.getStatus());
     await source.connect();
     const status = source.getStatus();
     if (status.state === "connected" && status.deviceId) {
+      writeStored("infinibike.trainer.v1", {
+        id: status.deviceId,
+        name: status.deviceName ?? "Smart trainer",
+      });
       this.profile = loadCalibration(status.deviceId);
+      const control = source.getLoadControl();
+      const savedLoad = control
+        ? rememberedLoad(status.deviceId, control.mode)
+        : undefined;
+      if (control && savedLoad !== undefined)
+        this.baseLoad = Math.max(
+          control.minimum,
+          Math.min(
+            control.maximum,
+            Math.round(savedLoad / control.increment) * control.increment,
+          ),
+        );
       this.showSetup();
+      await this.startPendingReplay();
     } else {
       this.showHome();
       if (status.message && status.message !== "No trainer selected.")
@@ -253,6 +320,7 @@ export class InfinibikeApp {
       calibratedAt: new Date().toISOString(),
     };
     this.showSetup();
+    await this.startPendingReplay();
   }
 
   private async setSource(source: TrainerSource): Promise<void> {
@@ -260,6 +328,7 @@ export class InfinibikeApp {
     this.sourceUnsubscribers = [];
     await this.source?.disconnect();
     this.source = source;
+    if (source.kind !== "demo") this.demoSource = undefined;
     this.baseLoad = undefined;
     this.sourceUnsubscribers.push(
       source.subscribe((sample) => {
@@ -351,6 +420,7 @@ export class InfinibikeApp {
       const input = this.root.querySelector<HTMLInputElement>("#seed")!;
       input.value = randomSeed();
       this.readEnvironment();
+      this.persistPreferences();
     });
     this.root.querySelectorAll("input, select").forEach((control) => {
       control.addEventListener("change", () => {
@@ -358,11 +428,13 @@ export class InfinibikeApp {
         this.readRideMode();
         this.readRidePhysics();
         this.readRideExperience();
+        this.persistPreferences();
       });
     });
     this.root.querySelector("#ride-mode")?.addEventListener("change", () => {
       this.readRideMode();
       this.updateRideGoalOptions();
+      this.persistPreferences();
     });
     this.root
       .querySelector("#start")
@@ -386,6 +458,7 @@ export class InfinibikeApp {
         try {
           await this.source.setTrainerLoad(value);
           this.baseLoad = value;
+          this.rememberBaseline();
           this.showToast("Trainer baseline applied.");
         } catch (error) {
           this.showToast(
@@ -484,6 +557,7 @@ export class InfinibikeApp {
             ?.checked ?? this.cameraSettings.reducedMotion,
       };
       this.world.setCameraSettings(this.cameraSettings);
+      this.persistPreferences();
     }
     const audio = this.root.querySelector<HTMLInputElement>("#ambient-audio");
     if (audio) this.audioEnabled = audio.checked;
@@ -602,13 +676,18 @@ export class InfinibikeApp {
   }
 
   private async startCountdown(): Promise<void> {
+    this.pendingReplay = false;
     this.readEnvironment();
     this.readRideMode();
     this.readRidePhysics();
     this.readRideExperience();
     if (!this.profile) return;
+    this.persistPreferences();
+    await this.restoreBaselineLoad();
+    this.lastAppliedGrade = undefined;
     this.world.configure(this.environment);
     this.world.setCameraSettings(this.cameraSettings);
+    this.persistPreferences();
     this.rideAudio.setEnabled(this.audioEnabled);
     if (this.audioEnabled && !new URLSearchParams(location.search).has("e2e"))
       void this.rideAudio.start();
@@ -633,13 +712,14 @@ export class InfinibikeApp {
   private showRideHud(): void {
     this.view = "ride";
     this.root.innerHTML = `
-      <main class="ride-ui">
+      <main class="ride-ui${this.compactHud ? " compact-hud" : ""}">
         <section class="hud" aria-label="Ride statistics">
           <div><span>Power</span><strong id="hud-power">0</strong><small>W</small></div>
           <div><span>Speed</span><strong id="hud-speed">0.0</strong><small>km/h</small></div>
           <div><span>Grade</span><strong id="hud-grade">0.0</strong><small>%</small></div>
           <div><span>Distance</span><strong id="hud-distance">0.00</strong><small>km</small></div>
           <div><span>Time</span><strong id="hud-time">0:00</strong></div>
+          <div class="climbing-indicator"><span>Total climbing</span><strong id="hud-climbing">0 m</strong></div>
         </section>
         <section class="route-preview${this.routePreviewCollapsed ? " collapsed" : ""}" aria-labelledby="route-preview-title">
           <header><span id="route-preview-title">Route ahead</span><div><strong>1.5 km</strong><button id="toggle-route-preview" class="route-preview-toggle" type="button" aria-label="${this.routePreviewCollapsed ? "Expand route preview" : "Minimize route preview"}" aria-expanded="${!this.routePreviewCollapsed}"><i data-lucide="${this.routePreviewCollapsed ? "chevron-down" : "chevron-up"}"></i></button></div></header>
@@ -655,17 +735,22 @@ export class InfinibikeApp {
           <div class="goal-progress" ${this.rideMode.mode === "free" ? "hidden" : ""}><span id="goal-progress-bar"></span></div>
         </section>
         <div class="ride-controls">
+          <button id="compact-hud" class="icon-button ride-menu" title="Toggle compact HUD" aria-pressed="${this.compactHud}"><i data-lucide="menu"></i></button>
           <button id="pause" class="icon-button ride-menu" title="Pause ride"><i data-lucide="pause"></i></button>
           <button id="camera" class="icon-button ride-menu" title="Change camera"><i data-lucide="camera"></i></button>
           <button id="camera-angle" class="icon-button ride-menu" title="Change camera angle"><i data-lucide="move-horizontal"></i></button>
           <button id="audio" class="icon-button ride-menu" title="${this.audioEnabled ? "Mute music and terrain sounds" : "Enable music and terrain sounds"}"><i data-lucide="${this.audioEnabled ? "volume-2" : "volume-x"}"></i></button>
         </div>
         ${this.demoSource ? `<label class="demo-power-control"><span>Demo power <output id="demo-power-value">${this.demoPowerW} W</output></span><input id="demo-power" type="range" min="0" max="500" step="5" value="${this.demoPowerW}" aria-label="Demo power" title="Set a steady hands-free demo effort"></label>` : ""}
-        <div class="climbing-indicator"><span>Total climbing</span><strong id="hud-climbing">0 m</strong></div>
         <div class="connection-badge">${escapeHtml(this.source?.getStatus().deviceName ?? "Controller")}</div>
       </main>
     `;
     this.icons();
+    this.root.querySelector("#compact-hud")?.addEventListener("click", () => {
+      this.compactHud = !this.compactHud;
+      this.persistPreferences();
+      this.showRideHud();
+    });
     this.root
       .querySelector("#pause")
       ?.addEventListener("click", () => this.pauseRide("Ride paused"));
@@ -677,6 +762,7 @@ export class InfinibikeApp {
       this.cameraSettings.angle =
         angles[(angles.indexOf(this.cameraSettings.angle) + 1) % 3]!;
       this.world.setCameraSettings(this.cameraSettings);
+      this.persistPreferences();
       this.showToast(
         { left: "Back left", center: "Directly behind", right: "Back right" }[
           this.cameraSettings.angle
@@ -690,6 +776,7 @@ export class InfinibikeApp {
       .querySelector("#toggle-route-preview")
       ?.addEventListener("click", () => {
         this.routePreviewCollapsed = !this.routePreviewCollapsed;
+        this.persistPreferences();
         this.showRideHud();
       });
     this.root
@@ -734,6 +821,7 @@ export class InfinibikeApp {
             <label><span>Camera angle</span><select id="pause-angle">${option("left", "Back left", this.cameraSettings.angle)}${option("center", "Directly behind", this.cameraSettings.angle)}${option("right", "Back right", this.cameraSettings.angle)}</select></label>
             <label><span>Smoothing</span><select id="pause-smoothing">${option("responsive", "Responsive", this.cameraSettings.smoothing)}${option("balanced", "Balanced", this.cameraSettings.smoothing)}${option("cinematic", "Cinematic", this.cameraSettings.smoothing)}</select></label>
             <label class="toggle-field"><span>Music &amp; terrain sounds</span><input id="pause-audio" type="checkbox" ${this.audioEnabled ? "checked" : ""}></label>
+            <label class="toggle-field"><span>Compact HUD</span><input id="pause-compact-hud" type="checkbox" ${this.compactHud ? "checked" : ""}></label>
             <label class="toggle-field"><span>Reduced motion</span><input id="pause-reduced-motion" type="checkbox" ${this.cameraSettings.reducedMotion ? "checked" : ""}></label>
           </div>
         </section>
@@ -751,22 +839,29 @@ export class InfinibikeApp {
         this.environment.graphics = (event.target as HTMLSelectElement)
           .value as GraphicsPreference;
         this.world.setGraphicsPreference(this.environment.graphics);
+        this.persistPreferences();
       });
     this.root
       .querySelector("#pause-resistance")
       ?.addEventListener("change", (event) => {
         this.terrainScale = Number((event.target as HTMLSelectElement).value);
+        this.persistPreferences();
         this.lastAppliedGrade = undefined;
       });
     this.root
       .querySelector("#pause-base-load")
       ?.addEventListener("input", (event) => {
         this.baseLoad = Number((event.target as HTMLInputElement).value);
+        this.rememberBaseline();
         this.lastAppliedGrade = undefined;
         this.root.querySelector<HTMLOutputElement>("#pause-base-value")!.value =
           `${this.baseLoad}${control?.unit ?? ""}`;
       });
     const updateRideSettings = (): void => {
+      this.compactHud =
+        this.root.querySelector<HTMLInputElement>(
+          "#pause-compact-hud",
+        )!.checked;
       this.cameraSettings = {
         angle: this.root.querySelector<HTMLSelectElement>("#pause-angle")!
           .value as CameraAngle,
@@ -782,12 +877,13 @@ export class InfinibikeApp {
       this.audioEnabled =
         this.root.querySelector<HTMLInputElement>("#pause-audio")!.checked;
       this.world.setCameraSettings(this.cameraSettings);
+      this.persistPreferences();
       this.rideAudio.setEnabled(this.audioEnabled);
       if (this.audioEnabled) void this.rideAudio.prepare();
     };
     this.root
       .querySelectorAll(
-        "#pause-camera, #pause-angle, #pause-smoothing, #pause-audio, #pause-reduced-motion",
+        "#pause-compact-hud, #pause-camera, #pause-angle, #pause-smoothing, #pause-audio, #pause-reduced-motion",
       )
       .forEach((control) =>
         control.addEventListener("change", updateRideSettings),
@@ -832,6 +928,7 @@ export class InfinibikeApp {
       this.ridePhysics.ftpW,
       this.rideSamples,
     );
+    this.lastSummary.preferences = this.currentPreferences();
     saveRideSummary(this.lastSummary);
     this.showSummary(this.lastSummary);
   }
@@ -878,10 +975,39 @@ export class InfinibikeApp {
       ?.addEventListener("click", () => this.exportRide(summary));
     this.root
       .querySelector("#again")
-      ?.addEventListener("click", () => this.showSetup());
+      ?.addEventListener("click", () => void this.replayRide(summary));
     this.root
       .querySelector("#done")
       ?.addEventListener("click", () => void this.returnHome());
+  }
+
+  private async startPendingReplay(): Promise<void> {
+    if (!this.pendingReplay || !this.profile) return;
+    this.pendingReplay = false;
+    await this.startCountdown();
+  }
+
+  private async replayRide(summary: RideSummary): Promise<void> {
+    if (summary.preferences)
+      Object.assign(
+        this,
+        normalizeRidePreferences(
+          summary.preferences,
+          this.cameraSettings.reducedMotion,
+        ),
+      );
+    this.environment = { ...summary.environment };
+    this.rideMode = { ...summary.rideMode };
+    this.ridePhysics = { ...this.ridePhysics, ftpW: summary.ftpW };
+    this.persistPreferences();
+    this.pendingReplay = true;
+    if (this.source?.getStatus().state === "connected" && this.profile) {
+      this.showSetup();
+      await this.startPendingReplay();
+    } else {
+      this.showHome();
+      this.showToast("Route loaded. Choose a trainer or demo to ride again.");
+    }
   }
 
   private showHistory(): void {
@@ -907,8 +1033,8 @@ export class InfinibikeApp {
     const entries = history.length
       ? history
           .map(
-            (ride) =>
-              `<article class="ride-row"><div><strong>${formatDistance(ride.distanceM)}</strong><span>${new Date(ride.startedAt).toLocaleDateString()} · ${modeLabel(ride.rideMode.mode)} · ${escapeHtml(ride.environment.seed)}</span></div><div><strong>${formatDuration(ride.durationMs)}</strong><span>${Math.round(ride.averagePowerW)} W avg</span></div></article>`,
+            (ride, index) =>
+              `<article class="ride-row"><div><strong>${formatDistance(ride.distanceM)}</strong><span>${new Date(ride.startedAt).toLocaleDateString()} · ${modeLabel(ride.rideMode.mode)} · ${escapeHtml(ride.environment.seed)}</span></div><div><strong>${formatDuration(ride.durationMs)}</strong><span>${Math.round(ride.averagePowerW)} W avg</span><button data-replay="${index}" aria-label="Ride again: ${escapeHtml(ride.environment.seed)}">Ride again</button></div></article>`,
           )
           .join("")
       : `<div class="empty-state"><p>No rides yet</p><span>Your completed rides will appear here.</span></div>`;
@@ -919,6 +1045,14 @@ export class InfinibikeApp {
         <div class="history-list">${entries}</div>
       </section></main>`;
     this.icons();
+    this.root
+      .querySelectorAll<HTMLButtonElement>("[data-replay]")
+      .forEach((button) =>
+        button.addEventListener("click", () => {
+          const ride = history[Number(button.dataset.replay)];
+          if (ride) void this.replayRide(ride);
+        }),
+      );
     this.root
       .querySelector("#back")
       ?.addEventListener("click", () => this.showHome());
@@ -1196,6 +1330,7 @@ export class InfinibikeApp {
   }
 
   private async returnHome(): Promise<void> {
+    this.pendingReplay = false;
     this.rideAudio.setPaused(true);
     await this.restoreBaselineLoad();
     this.sourceUnsubscribers.forEach((unsubscribe) => unsubscribe());
@@ -1279,6 +1414,7 @@ export class InfinibikeApp {
     const index = modes.indexOf(this.cameraSettings.mode);
     this.cameraSettings.mode = modes[(index + 1) % modes.length]!;
     this.world.setCameraSettings(this.cameraSettings);
+    this.persistPreferences();
     const names: Record<CameraMode, string> = {
       close: "Close chase",
       wide: "Wide chase",
@@ -1289,6 +1425,7 @@ export class InfinibikeApp {
 
   private toggleAudio(): void {
     this.audioEnabled = !this.audioEnabled;
+    this.persistPreferences();
     this.rideAudio.setEnabled(this.audioEnabled);
     if (this.audioEnabled) void this.rideAudio.start();
     const button = this.root.querySelector<HTMLButtonElement>("#audio");

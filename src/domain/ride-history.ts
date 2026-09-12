@@ -1,3 +1,4 @@
+import type { RidePreferences } from "./ride-preferences";
 import { normalizeEnvironment, type EnvironmentSettings } from "./environment";
 import {
   DEFAULT_RIDE_MODE,
@@ -8,6 +9,7 @@ import type { RideSnapshot } from "./ride-model";
 import type { RideDataPoint } from "./ride-analytics";
 
 export type RideSummary = {
+  preferences?: RidePreferences;
   id: string;
   startedAt: string;
   endedAt: string;

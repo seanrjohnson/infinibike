@@ -45,6 +45,9 @@ it("plants feet during stance and solves connected hip/knee/ankle positions", ()
         -0.49 * height * (Math.cos(pose.hip) + Math.cos(pose.hip + pose.knee));
       const z =
         -0.49 * height * (Math.sin(pose.hip) + Math.sin(pose.hip + pose.knee));
+      expect(pose.knee).toBeLessThan(0);
+      // The knee must sit forward (-Z) of the hip-to-ankle midpoint.
+      expect(-0.49 * height * Math.sin(pose.hip)).toBeLessThan(z / 2);
       expect(y).toBeCloseTo(-0.88 * height + pose.lift);
       expect(z).toBeCloseTo(pose.z);
       expect(pose.hip + pose.knee + pose.ankle).toBeCloseTo(0);

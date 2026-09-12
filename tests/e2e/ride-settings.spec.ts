@@ -65,7 +65,18 @@ for (const mobile of [false, true]) {
       });
       Object.defineProperty(navigator, "bluetooth", {
         configurable: true,
-        value: { requestDevice: async () => device },
+        value: {
+          requestDevice: async () => {
+            localStorage.setItem(
+              "test-chooser-count",
+              String(
+                Number(localStorage.getItem("test-chooser-count") ?? 0) + 1,
+              ),
+            );
+            return device;
+          },
+          getDevices: async () => [device],
+        },
       });
     });
     await page.goto("/?e2e=1");
@@ -78,7 +89,10 @@ for (const mobile of [false, true]) {
     await expect(page.locator(".calibration-ready")).toContainText(
       "145 W cruise",
     );
-    await page.getByRole("button", { name: "Connect smart trainer" }).click();
+    await page.getByRole("button", { name: "Reconnect Test trainer" }).click();
+    expect(
+      await page.evaluate(() => localStorage.getItem("test-chooser-count")),
+    ).toBe("1");
     await expect(page.locator(".calibration-ready")).toContainText(
       "145 W cruise",
     );
@@ -113,5 +127,15 @@ for (const mobile of [false, true]) {
       .toBeLessThan(before);
     await page.keyboard.press("Control+Home");
     await expect(page.locator("#summary-title")).toBeInViewport();
+    const commands = await page.evaluate(() =>
+      localStorage.getItem("test-load"),
+    );
+    await page.reload();
+    await page.getByRole("button", { name: "Reconnect Test trainer" }).click();
+    await expect(page.locator("#resistance")).toHaveValue("0.45");
+    await expect(page.locator("#base-load")).toHaveValue("25");
+    expect(await page.evaluate(() => localStorage.getItem("test-load"))).toBe(
+      commands,
+    );
   });
 }

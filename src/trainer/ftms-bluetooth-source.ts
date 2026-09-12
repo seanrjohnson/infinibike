@@ -32,7 +32,7 @@ export class FtmsBluetoothSource extends SourceBase {
   private healthTimer?: number;
   private lastSampleAt = 0;
 
-  constructor() {
+  constructor(private readonly rememberedDeviceId?: string) {
     super();
     if (!("bluetooth" in navigator)) {
       this.status = {
@@ -50,9 +50,15 @@ export class FtmsBluetoothSource extends SourceBase {
       message: "Choose your FTMS trainer.",
     });
     try {
-      this.device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [FTMS_SERVICE] }],
-      });
+      const known =
+        this.rememberedDeviceId && navigator.bluetooth.getDevices
+          ? await navigator.bluetooth.getDevices().catch(() => [])
+          : [];
+      this.device =
+        known.find((device) => device.id === this.rememberedDeviceId) ??
+        (await navigator.bluetooth.requestDevice({
+          filters: [{ services: [FTMS_SERVICE] }],
+        }));
       this.device.addEventListener(
         "gattserverdisconnected",
         this.handleDisconnect,

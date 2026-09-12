@@ -21,7 +21,8 @@ export function walkingLeg(distanceM: number, phase: number, height = 1) {
   const lift = stance ? 0 : Math.sin(t * Math.PI) * 0.16 * height;
   const length = 0.49 * height;
   const y = -0.88 * height + lift;
-  const knee = 2 * Math.acos(Math.min(1, Math.hypot(y, z) / (2 * length)));
+  // Local forward is -Z: bend the knee forward and fold the shin back.
+  const knee = -2 * Math.acos(Math.min(1, Math.hypot(y, z) / (2 * length)));
   const hip = Math.atan2(-z, -y) - knee / 2;
   return { hip, knee, ankle: -hip - knee, z, lift, stance };
 }

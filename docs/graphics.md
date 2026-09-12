@@ -104,3 +104,21 @@ Directional shadows now snap in the light's image plane using absolute world coo
 Saved calibration is visible after refresh and remains scoped to its trainer. Demo profiles can now be edited and restored too. Endurance includes a 15-minute goal. Pause settings expose terrain resistance and baseline load for load-capable trainers; edits apply on resume. Camera, audio, and graphics controls remain available. Pedaling keyboard shortcuts only run during an active, unpaused ride, so Up Arrow and Space can scroll results. Pause dialogs use the dynamic viewport height.
 
 Browser coverage checks profile saving/reloading, endurance selection, pause settings, simulated load commands, and results scrolling on desktop, phone, and tablet. Physical trainer resistance writes have not been manually tested.
+
+## Compact HUD and pedestrian knees
+
+The mode panel sizes to its content and sits beside the route preview on narrow screens. Total climbing is the sixth statistic in the bottom bar, preventing independent positioning from covering distance or time. Lane colors are chosen per ten-block district (1 km), while parking still varies every block. Pedestrian IK uses the forward knee solution for the -Z facing rigs, keeping the same planted-foot targets and level ankles.
+
+Validation covers HUD overlap at widths from 320 to 1920 pixels on desktop and touch browsers, forward knee position through the full stride, and consistent lane color across ten blocks.
+
+## Remembered rides, reconnect, compact HUD, and city life
+
+Ride preferences use `infinibike.preferences.v1`. Values are validated when loaded; missing or invalid values use defaults. Environment, camera, ride mode, rider physics, audio, terrain resistance, and HUD preferences persist after refresh. Baseline loads use a separate key per trainer and control mode and are clamped to its advertised range. Restoring a connection does not apply a load; starting or resuming a ride applies the saved baseline.
+
+The last connected trainer is remembered by ID and display name. Its home-screen reconnect action tries the browser's previously permitted device list, falling back to the chooser when that device is unavailable. Calibration remains per trainer. The feature follows the [Chrome Web Bluetooth connection flow](https://developer.chrome.com/docs/capabilities/bluetooth). Physical Bluetooth reconnection and resistance writes are untested; browser tests use a simulated GATT service and command responses.
+
+Compact HUD keeps power, speed, and time, shortens the route chart, and hides secondary stats and guidance text. The in-ride button and pause checkbox both persist the preference. Full HUD restores the prior information.
+
+City cars, pedestrians, and cyclists slow and pause before intersections, then continue on a deterministic timing cycle. Same-direction actors keep spacing. Three cyclists ride in the bike lanes with connected pedaling legs. Actor animation uses actual traveled distance. Neighborhoods now include residential, shopping, park, downtown, and industrial sections, generally 1 km long with 250 m spatial transitions. Shops emphasize storefronts; parks have fewer buildings and additional trees.
+
+New ride summaries include the settings used for replay. Results can start another ride directly; history restores the route and settings and asks for a controller only when disconnected. Older histories remain readable and reuse their recorded route and goal with current preferences for settings they did not record. No existing storage keys are removed.

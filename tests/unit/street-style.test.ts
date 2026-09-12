@@ -44,3 +44,19 @@ it("keeps shadow projection stationary under subtexel motion on sloping terrain"
     expect(snapped.dot(up)).toBeCloseTo(start.dot(up), 8);
   }
 });
+
+it("holds lane color for ten blocks without freezing parking variety", () => {
+  for (let district = 0; district < 20; district++) {
+    const start = district * 1000 + 50;
+    const styles = Array.from({ length: 10 }, (_, block) =>
+      cityBlockStyle("long-lanes", start + block * 100 + 1),
+    );
+    expect(new Set(styles.map((style) => style.green)).size).toBe(1);
+    expect(new Set(styles.map((style) => style.parking)).size).toBeGreaterThan(
+      1,
+    );
+    expect(cityBlockStyle("long-lanes", start + 999).green).toBe(
+      styles[0]!.green,
+    );
+  }
+});

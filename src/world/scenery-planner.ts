@@ -153,7 +153,7 @@ export class SceneryPlanner {
         side *
         (city
           ? category === "tree"
-            ? 8.5
+            ? 8.5 + lane * 14
             : 11 + depth / 2 + lane * 35
           : category === "building"
             ? 48 + lane * 28
@@ -203,6 +203,13 @@ export class SceneryPlanner {
       for (let step = 0; step < 5; step++)
         for (const side of [-1, 1])
           add(start + 25 + step * 50, side, 0, "tree");
+      for (let step = 0; step < 5; step++) {
+        const distance = start + 25 + step * 50;
+        if (districtAt(settings.seed, distance, `park:${distance}`) !== "park")
+          continue;
+        for (const side of [-1, 1])
+          for (const lane of [1, 2]) add(distance, side, lane, "tree");
+      }
     } else {
       for (let step = 0; step < 10; step++)
         for (const side of [-1, 1])

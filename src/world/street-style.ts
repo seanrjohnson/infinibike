@@ -4,7 +4,11 @@ import { hashString } from "../domain/random";
 export function cityBlockStyle(seed: string, distanceM: number) {
   const block = Math.floor((distanceM - 50) / 100);
   const roll = hashString(`${seed.trim().toLowerCase()}:street-style:${block}`);
-  return { block, green: (roll & 1) === 0, parking: (roll >>> 1) % 4 };
+  const district = Math.floor(block / 10);
+  const laneRoll = hashString(
+    `${seed.trim().toLowerCase()}:street-style:${district}`,
+  );
+  return { block, green: (laneRoll & 1) === 0, parking: (roll >>> 1) % 4 };
 }
 
 export function hasCurbParking(seed: string, distanceM: number, side: number) {

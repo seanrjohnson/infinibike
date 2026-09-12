@@ -56,9 +56,10 @@ export const DISTRICTS: Record<
   { color: number; height: readonly [number, number]; spacing: number }
 > = {
   residential: { color: 0xc6ae87, height: [5.5, 10], spacing: 1 },
+  shopping: { color: 0xc5a178, height: [6, 12], spacing: 0.95 },
   downtown: { color: 0xa5b4b8, height: [12, 27], spacing: 1 },
   industrial: { color: 0xa48069, height: [7, 11], spacing: 0.85 },
-  park: { color: 0xc7b99a, height: [5, 8], spacing: 0.35 },
+  park: { color: 0x92aa78, height: [4, 6], spacing: 0.12 },
 };
 
 export function sceneryRandom(
@@ -80,24 +81,28 @@ export function regionForObject(region: RegionWeights, roll: number): RegionId {
 }
 function districtCell(seed: string, cell: number): CityDistrict {
   if (cell <= 0) return "residential";
-  const roll = sceneryRandom(seed, "district", String(cell))();
-  return roll < 0.13
-    ? "park"
-    : roll < 0.28
-      ? "industrial"
-      : roll < 0.57
-        ? "downtown"
-        : "residential";
+  const neighborhoods: CityDistrict[] = [
+    "shopping",
+    "park",
+    "downtown",
+    "industrial",
+  ];
+  const offset =
+    hashString(`${seed.trim().toLowerCase()}:district-order`) %
+    neighborhoods.length;
+  return cell % 5 === 0
+    ? "residential"
+    : neighborhoods[(cell - 1 + offset) % neighborhoods.length]!;
 }
-/** Spatially mix neighboring districts over 160m instead of switching a chunk. */
+/** Spatially mix neighboring districts over 250m instead of switching a chunk. */
 export function districtAt(
   seed: string,
   distance: number,
   objectId: string,
 ): CityDistrict {
-  const cell = Math.floor(distance / 500);
-  const local = distance - cell * 500;
-  const t = Math.min(1, local / 160);
+  const cell = Math.floor(distance / 1000);
+  const local = distance - cell * 1000;
+  const t = Math.min(1, local / 250);
   const blend = t * t * (3 - 2 * t);
   return sceneryRandom(seed, "district-transition", objectId)() < blend
     ? districtCell(seed, cell)

@@ -1,6 +1,7 @@
 import type { AssetKey } from "./asset-library";
 
-export type CityDistrict = "residential" | "downtown" | "industrial" | "park";
+export type CityDistrict =
+  "residential" | "shopping" | "downtown" | "industrial" | "park";
 
 export type BuildingAssetKey = Extract<
   AssetKey,
@@ -49,6 +50,16 @@ export const BUILDING_FREQUENCIES: Record<
     { key: "warehouse", weight: 1 },
     { key: "fire_station", weight: 1 },
   ],
+  shopping: [
+    { key: "corner_shop", weight: 22 },
+    { key: "bodega", weight: 15 },
+    { key: "cafe", weight: 15 },
+    { key: "bakery", weight: 12 },
+    { key: "bookstore", weight: 12 },
+    { key: "townhouses", weight: 8 },
+    { key: "balcony_apartment", weight: 10 },
+    { key: "hotel", weight: 6 },
+  ],
   downtown: [
     { key: "office_tower", weight: 12 },
     { key: "hotel", weight: 6 },
@@ -89,22 +100,9 @@ export const BUILDING_FREQUENCIES: Record<
     { key: "cottage", weight: 2 },
   ],
   park: [
-    { key: "corner_shop", weight: 4 },
-    { key: "hotel", weight: 4 },
-    { key: "house", weight: 18 },
-    { key: "cottage", weight: 16 },
-    { key: "duplex", weight: 11 },
-    { key: "townhouses", weight: 11 },
-    { key: "apartment", weight: 7 },
-    { key: "cafe", weight: 6 },
-    { key: "bakery", weight: 4 },
-    { key: "bodega", weight: 3 },
-    { key: "bookstore", weight: 4 },
-    { key: "school", weight: 3 },
-    { key: "church", weight: 3 },
-    { key: "office", weight: 2 },
-    { key: "warehouse", weight: 1 },
-    { key: "fire_station", weight: 3 },
+    { key: "cottage", weight: 45 },
+    { key: "cafe", weight: 35 },
+    { key: "house", weight: 20 },
   ],
 };
 
