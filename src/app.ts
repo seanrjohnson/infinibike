@@ -1,6 +1,7 @@
 import {
   Bluetooth,
   Camera,
+  MoveHorizontal,
   ChevronDown,
   ChevronLeft,
   ChevronUp,
@@ -81,6 +82,7 @@ import type {
 import { WorldScene } from "./world/world-scene";
 import type {
   CameraMode,
+  CameraAngle,
   CameraSettings,
   CameraSmoothing,
 } from "./world/world-scene";
@@ -91,6 +93,7 @@ type View =
 const ICONS = {
   Bluetooth,
   Camera,
+  MoveHorizontal,
   ChevronDown,
   ChevronLeft,
   ChevronUp,
@@ -135,7 +138,7 @@ export class InfinibikeApp {
   private source?: TrainerSource;
   private sourceUnsubscribers: Unsubscribe[] = [];
   private demoSource?: DemoSource;
-  private profile?: CalibrationProfile;
+  private profile?: CalibrationProfile = loadCalibration();
   private environment: EnvironmentSettings = { ...DEFAULT_ENVIRONMENT };
   private rideMode: RideModeSettings = { ...DEFAULT_RIDE_MODE };
   private ridePhysics: RidePhysicsSettings = { ...DEFAULT_RIDE_PHYSICS };
@@ -143,6 +146,7 @@ export class InfinibikeApp {
   private audioEnabled = false;
   private cameraSettings: CameraSettings = {
     mode: "close",
+    angle: "right",
     smoothing: "balanced",
     reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
   };
@@ -196,6 +200,7 @@ export class InfinibikeApp {
           <p class="eyebrow">Endless indoor cycling</p>
           <h1 id="brand-title">Infinibike</h1>
           <p class="lead">A new road every ride.</p>
+          ${this.profile ? `<div class="calibration-ready"><span>Saved effort profile</span><strong>${this.profile.cruisePowerW} W cruise ? ${this.profile.hardPowerW} W hard</strong></div>` : ""}
           <div class="primary-stack">
             <button id="connect" class="primary"><i data-lucide="bluetooth"></i>Connect smart trainer</button>
             <button id="demo"><i data-lucide="keyboard"></i>Ride with keys or touch</button>
@@ -241,7 +246,7 @@ export class InfinibikeApp {
     demo.setPower(this.demoPowerW);
     await this.setSource(demo);
     await demo.connect();
-    this.profile = {
+    this.profile = loadCalibration("demo") ?? {
       deviceId: "demo",
       cruisePowerW: 120,
       hardPowerW: 260,
@@ -297,7 +302,7 @@ export class InfinibikeApp {
             <div><p class="eyebrow">${demo ? "Demo controls" : escapeHtml(status?.deviceName ?? "Smart trainer")}</p><h1 id="setup-title">Shape your ride</h1></div>
           </header>
           ${calibration}
-          ${demo ? "" : `<div class="inline-actions"><button id="guided">${this.profile ? "Recalibrate" : "Guided calibration"}</button><button id="manual">Enter wattages</button></div>`}
+          <div class="inline-actions">${demo ? "" : `<button id="guided">${this.profile ? "Recalibrate" : "Guided calibration"}</button>`}<button id="manual">Enter wattages</button></div>
           <div class="configuration-grid">
             <label class="seed-field"><span>World seed</span><div class="input-with-action"><input id="seed" maxlength="32" value="${escapeHtml(this.environment.seed)}"><button id="random-seed" class="icon-button" title="Randomize seed"><i data-lucide="dices"></i></button></div></label>
             <label><span>Landscape</span><select id="landscape">${option("countryside", "Countryside", this.environment.landscape)}${option("city", "City", this.environment.landscape)}</select></label>
@@ -307,6 +312,7 @@ export class InfinibikeApp {
             <label><span>Rider weight</span><div class="unit-input"><input id="rider-weight" type="number" min="35" max="200" value="${this.ridePhysics.riderWeightKg}"><span>kg</span></div></label>
             <label><span>FTP</span><div class="unit-input"><input id="ftp" type="number" min="60" max="700" value="${this.ridePhysics.ftpW}"><span>W</span></div></label>
             <label><span>Camera</span><select id="camera-mode">${option("close", "Close chase", this.cameraSettings.mode)}${option("wide", "Wide chase", this.cameraSettings.mode)}${option("handlebar", "Handlebar", this.cameraSettings.mode)}</select></label>
+            <label><span>Camera angle</span><select id="camera-angle">${option("left", "Back left", this.cameraSettings.angle)}${option("center", "Directly behind", this.cameraSettings.angle)}${option("right", "Back right", this.cameraSettings.angle)}</select></label>
             <label><span>Camera smoothing</span><select id="camera-smoothing">${option("responsive", "Responsive", this.cameraSettings.smoothing)}${option("balanced", "Balanced", this.cameraSettings.smoothing)}${option("cinematic", "Cinematic", this.cameraSettings.smoothing)}</select></label>
             <label class="toggle-field"><span>Music &amp; terrain sounds</span><input id="ambient-audio" type="checkbox" ${this.audioEnabled ? "checked" : ""}></label>
             <label class="toggle-field"><span>Reduced motion</span><input id="reduced-motion" type="checkbox" ${this.cameraSettings.reducedMotion ? "checked" : ""}></label>
@@ -470,6 +476,8 @@ export class InfinibikeApp {
     if (mode && smoothing) {
       this.cameraSettings = {
         mode,
+        angle: this.root.querySelector<HTMLSelectElement>("#camera-angle")!
+          .value as CameraAngle,
         smoothing,
         reducedMotion:
           this.root.querySelector<HTMLInputElement>("#reduced-motion")
@@ -649,6 +657,7 @@ export class InfinibikeApp {
         <div class="ride-controls">
           <button id="pause" class="icon-button ride-menu" title="Pause ride"><i data-lucide="pause"></i></button>
           <button id="camera" class="icon-button ride-menu" title="Change camera"><i data-lucide="camera"></i></button>
+          <button id="camera-angle" class="icon-button ride-menu" title="Change camera angle"><i data-lucide="move-horizontal"></i></button>
           <button id="audio" class="icon-button ride-menu" title="${this.audioEnabled ? "Mute music and terrain sounds" : "Enable music and terrain sounds"}"><i data-lucide="${this.audioEnabled ? "volume-2" : "volume-x"}"></i></button>
         </div>
         ${this.demoSource ? `<label class="demo-power-control"><span>Demo power <output id="demo-power-value">${this.demoPowerW} W</output></span><input id="demo-power" type="range" min="0" max="500" step="5" value="${this.demoPowerW}" aria-label="Demo power" title="Set a steady hands-free demo effort"></label>` : ""}
@@ -663,6 +672,17 @@ export class InfinibikeApp {
     this.root
       .querySelector("#camera")
       ?.addEventListener("click", () => this.cycleCamera());
+    this.root.querySelector("#camera-angle")?.addEventListener("click", () => {
+      const angles: CameraAngle[] = ["right", "center", "left"];
+      this.cameraSettings.angle =
+        angles[(angles.indexOf(this.cameraSettings.angle) + 1) % 3]!;
+      this.world.setCameraSettings(this.cameraSettings);
+      this.showToast(
+        { left: "Back left", center: "Directly behind", right: "Back right" }[
+          this.cameraSettings.angle
+        ],
+      );
+    });
     this.root
       .querySelector("#audio")
       ?.addEventListener("click", () => this.toggleAudio());
@@ -692,6 +712,7 @@ export class InfinibikeApp {
     this.rideAudio.setPaused(true);
     void this.restoreBaselineLoad();
     this.view = "pause";
+    const control = this.source?.getLoadControl();
     this.root.innerHTML = `
       <main class="modal-layer">
         <section class="modal pause-modal" aria-labelledby="pause-title">
@@ -702,8 +723,15 @@ export class InfinibikeApp {
             <button id="end"><i data-lucide="square"></i>End ride</button>
           </div>
           <label><span>Graphics</span><select id="pause-graphics">${option("automatic", "Automatic", this.environment.graphics)}${option("low", "Low", this.environment.graphics)}${option("medium", "Medium", this.environment.graphics)}${option("high", "High", this.environment.graphics)}</select></label>
+          ${
+            control
+              ? `<label><span>Terrain resistance</span><select id="pause-resistance">${option("0", "Off", String(this.terrainScale))}${option("0.45", "Gentle", String(this.terrainScale))}${option("0.75", "Standard", String(this.terrainScale))}${option("1", "Strong", String(this.terrainScale))}</select></label>
+          <label><span>Baseline ${escapeHtml(control.label.toLowerCase())}</span><input id="pause-base-load" type="range" min="${control.minimum}" max="${control.maximum}" step="${control.increment}" value="${this.baseLoad ?? (control.mode === "simulation-grade" ? 0 : control.minimum)}"></label><output id="pause-base-value">${this.baseLoad ?? (control.mode === "simulation-grade" ? 0 : control.minimum)}${escapeHtml(control.unit)}</output><p class="support-note">Resistance changes apply when you resume.</p>`
+              : ""
+          }
           <div class="configuration-grid two pause-settings">
             <label><span>Camera</span><select id="pause-camera">${option("close", "Close chase", this.cameraSettings.mode)}${option("wide", "Wide chase", this.cameraSettings.mode)}${option("handlebar", "Handlebar", this.cameraSettings.mode)}</select></label>
+            <label><span>Camera angle</span><select id="pause-angle">${option("left", "Back left", this.cameraSettings.angle)}${option("center", "Directly behind", this.cameraSettings.angle)}${option("right", "Back right", this.cameraSettings.angle)}</select></label>
             <label><span>Smoothing</span><select id="pause-smoothing">${option("responsive", "Responsive", this.cameraSettings.smoothing)}${option("balanced", "Balanced", this.cameraSettings.smoothing)}${option("cinematic", "Cinematic", this.cameraSettings.smoothing)}</select></label>
             <label class="toggle-field"><span>Music &amp; terrain sounds</span><input id="pause-audio" type="checkbox" ${this.audioEnabled ? "checked" : ""}></label>
             <label class="toggle-field"><span>Reduced motion</span><input id="pause-reduced-motion" type="checkbox" ${this.cameraSettings.reducedMotion ? "checked" : ""}></label>
@@ -724,8 +752,24 @@ export class InfinibikeApp {
           .value as GraphicsPreference;
         this.world.setGraphicsPreference(this.environment.graphics);
       });
+    this.root
+      .querySelector("#pause-resistance")
+      ?.addEventListener("change", (event) => {
+        this.terrainScale = Number((event.target as HTMLSelectElement).value);
+        this.lastAppliedGrade = undefined;
+      });
+    this.root
+      .querySelector("#pause-base-load")
+      ?.addEventListener("input", (event) => {
+        this.baseLoad = Number((event.target as HTMLInputElement).value);
+        this.lastAppliedGrade = undefined;
+        this.root.querySelector<HTMLOutputElement>("#pause-base-value")!.value =
+          `${this.baseLoad}${control?.unit ?? ""}`;
+      });
     const updateRideSettings = (): void => {
       this.cameraSettings = {
+        angle: this.root.querySelector<HTMLSelectElement>("#pause-angle")!
+          .value as CameraAngle,
         mode: this.root.querySelector<HTMLSelectElement>("#pause-camera")!
           .value as CameraMode,
         smoothing: this.root.querySelector<HTMLSelectElement>(
@@ -743,7 +787,7 @@ export class InfinibikeApp {
     };
     this.root
       .querySelectorAll(
-        "#pause-camera, #pause-smoothing, #pause-audio, #pause-reduced-motion",
+        "#pause-camera, #pause-angle, #pause-smoothing, #pause-audio, #pause-reduced-motion",
       )
       .forEach((control) =>
         control.addEventListener("change", updateRideSettings),
@@ -761,6 +805,8 @@ export class InfinibikeApp {
         return;
       }
     }
+    await this.restoreBaselineLoad();
+    this.lastAppliedGrade = undefined;
     this.showRideHud();
     this.paused = false;
     this.world.setRealtime(true);
@@ -805,7 +851,7 @@ export class InfinibikeApp {
     ] as const;
     this.root.innerHTML = `
       <main class="summary-shell">
-        <section class="summary-content" aria-labelledby="summary-title">
+        <section class="summary-content" aria-labelledby="summary-title" tabindex="0">
           <p class="eyebrow">${summary.goalCompleted ? "Goal complete" : "Ride complete"} · ${modeLabel(summary.rideMode.mode)}</p><h1 id="summary-title">${formatDistance(summary.distanceM)}</h1>
           <div class="summary-grid">
             <div><span>Time</span><strong>${formatDuration(summary.durationMs)}</strong></div>
@@ -1122,6 +1168,8 @@ export class InfinibikeApp {
     };
     window.addEventListener("keydown", (event) => {
       if (
+        this.gameActive &&
+        !this.paused &&
         (event.code === "Space" || event.code === "ArrowUp") &&
         !event.repeat &&
         !(event.target as HTMLElement).closest("button, input, select")
@@ -1136,6 +1184,7 @@ export class InfinibikeApp {
     window.addEventListener("pointerdown", (event) => {
       if (
         !this.gameActive ||
+        this.paused ||
         (event.target as HTMLElement).closest("button, select, input")
       )
         return;
@@ -1154,7 +1203,7 @@ export class InfinibikeApp {
     await this.source?.disconnect();
     this.source = undefined;
     this.demoSource = undefined;
-    this.profile = undefined;
+    this.profile = loadCalibration();
     this.showHome();
   }
 

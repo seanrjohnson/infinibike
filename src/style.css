@@ -348,7 +348,7 @@ select:focus {
 .modal {
   position: relative;
   width: min(100%, 31rem);
-  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
   overflow: auto;
   padding: clamp(1.5rem, 5vw, 2.5rem);
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -686,7 +686,17 @@ select:focus {
   margin-bottom: 0;
 }
 .summary-shell {
-  align-items: center;
+  pointer-events: auto;
+  align-items: stretch;
+  height: 100dvh;
+  min-height: 0;
+}
+.summary-shell .summary-content {
+  min-height: 0;
+  max-height: 100%;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding-bottom: max(2rem, env(safe-area-inset-bottom));
 }
 .summary-content h1 {
   color: #f1c75b;

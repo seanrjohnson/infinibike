@@ -22,7 +22,7 @@ export const DEFAULT_RIDE_MODE: RideModeSettings = {
 
 export const RIDE_MODE_GOALS: Record<RideModeId, readonly number[]> = {
   free: [0],
-  endurance: [30, 45, 60, 90],
+  endurance: [15, 30, 45, 60, 90],
   hill: [250, 500, 750, 1000],
   intervals: [20, 30, 45],
 };

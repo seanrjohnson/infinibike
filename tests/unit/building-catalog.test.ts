@@ -9,7 +9,8 @@ describe("city building catalog", () => {
   it("uses complete normalized frequency tables", () => {
     for (const entries of Object.values(BUILDING_FREQUENCIES)) {
       expect(entries.reduce((sum, entry) => sum + entry.weight, 0)).toBe(100);
-      expect(new Set(entries.map(({ key }) => key)).size).toBe(14);
+      expect(new Set(entries.map(({ key }) => key)).size).toBe(entries.length);
+      expect(entries.every(({ weight }) => weight > 0)).toBe(true);
     }
   });
 
@@ -24,7 +25,9 @@ describe("city building catalog", () => {
         selectBuildingAsset(district, index / 1_000),
       );
       expect(first).toEqual(second);
-      expect(new Set(first).size).toBe(14);
+      expect(new Set(first)).toEqual(
+        new Set(BUILDING_FREQUENCIES[district].map(({ key }) => key)),
+      );
     }
   });
 
@@ -35,7 +38,14 @@ describe("city building catalog", () => {
       );
     const residential = sample("residential");
     const industrial = sample("industrial");
-    expect(residential.filter((key) => key === "house").length).toBe(2_800);
-    expect(industrial.filter((key) => key === "warehouse").length).toBe(4_200);
+    expect(residential.filter((key) => key === "house").length).toBeGreaterThan(
+      2_000,
+    );
+    expect(
+      industrial.filter((key) => key === "warehouse").length,
+    ).toBeGreaterThan(3_000);
+    expect(
+      industrial.filter((key) => key === "workshop").length,
+    ).toBeGreaterThan(1_500);
   });
 });

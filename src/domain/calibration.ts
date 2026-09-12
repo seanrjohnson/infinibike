@@ -50,19 +50,36 @@ export function createManualCalibration(
 
 function loadAll(): Record<string, CalibrationProfile> {
   try {
-    return JSON.parse(localStorage.getItem(KEY) ?? "{}") as Record<
-      string,
-      CalibrationProfile
-    >;
+    const stored: unknown = JSON.parse(localStorage.getItem(KEY) ?? "{}");
+    if (!stored || typeof stored !== "object" || Array.isArray(stored))
+      return {};
+    return Object.fromEntries(
+      Object.entries(stored).filter(([, value]) => {
+        if (!value || typeof value !== "object") return false;
+        const profile = value as Partial<CalibrationProfile>;
+        return (
+          typeof profile.deviceId === "string" &&
+          typeof profile.calibratedAt === "string" &&
+          Number.isFinite(profile.cruisePowerW) &&
+          Number.isFinite(profile.hardPowerW) &&
+          profile.cruisePowerW! >= 30 &&
+          profile.hardPowerW! >= profile.cruisePowerW! + 30
+        );
+      }),
+    );
   } catch {
     return {};
   }
 }
 
 export function loadCalibration(
-  deviceId: string,
+  deviceId?: string,
 ): CalibrationProfile | undefined {
-  return loadAll()[deviceId];
+  const profiles = loadAll();
+  if (deviceId) return profiles[deviceId];
+  return Object.values(profiles).sort((a, b) =>
+    b.calibratedAt.localeCompare(a.calibratedAt),
+  )[0];
 }
 
 export function saveCalibration(profile: CalibrationProfile): void {

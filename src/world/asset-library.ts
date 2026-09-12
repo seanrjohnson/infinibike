@@ -31,6 +31,12 @@ export type AssetKey =
   | "person_d"
   | "person_e"
   | "person_f"
+  | "corner_shop"
+  | "stepped_apartment"
+  | "balcony_apartment"
+  | "office_tower"
+  | "workshop"
+  | "hotel"
   | "house"
   | "cottage"
   | "duplex"
@@ -110,7 +116,10 @@ const ASSET_PREFIX = "asset__";
 
 export class AssetLibrary {
   private readonly templates = new Map<AssetKey, THREE.Object3D>();
+  private readonly bounds = new Map<AssetKey, THREE.Box3>();
+  private readonly anchors = new Map<AssetKey, THREE.Vector3>();
   private loaded = false;
+  private failed = false;
   readonly ready: Promise<void>;
 
   constructor() {
@@ -130,8 +139,8 @@ export class AssetLibrary {
               weldedGeometry.deleteAttribute("tangent");
               object.geometry = mergeVertices(weldedGeometry, 0.0001);
             }
-            object.geometry.computeVertexNormals();
-            object.geometry.normalizeNormals();
+            if (!object.geometry.getAttribute("normal"))
+              object.geometry.computeVertexNormals();
             const materials = Array.isArray(object.material)
               ? object.material
               : [object.material];
@@ -150,13 +159,37 @@ export class AssetLibrary {
             }
           }
           if (!object.name.startsWith(ASSET_PREFIX)) return;
-          const key = object.name.slice(ASSET_PREFIX.length) as AssetKey;
+          const key = (object.userData.asset_key ??
+            object.name.slice(ASSET_PREFIX.length)) as AssetKey;
+          object.updateWorldMatrix(true, true);
+          const wrapper = new THREE.Group();
+          wrapper.add(object.clone(true));
+          wrapper.updateMatrixWorld(true);
+          const bounds = new THREE.Box3().setFromObject(wrapper);
+          const size = bounds.getSize(new THREE.Vector3());
+          if (
+            bounds.isEmpty() ||
+            ![size.x, size.y, size.z].every(
+              (value) => Number.isFinite(value) && value > 0,
+            )
+          )
+            return;
           this.templates.set(key, object);
+          this.bounds.set(key, bounds);
+          // A transformed mesh AABB can extend well below its real vertices.
+          // Keep conservative dimensions for planning, but anchor the real mesh.
+          const precise = new THREE.Box3().setFromObject(wrapper, true);
+          const center = precise.getCenter(new THREE.Vector3());
+          this.anchors.set(
+            key,
+            new THREE.Vector3(-center.x, -precise.min.y, -center.z),
+          );
         });
         this.loaded = this.templates.size > 0;
       })
       .catch(() => {
         this.loaded = false;
+        this.failed = true;
       });
   }
 
@@ -166,6 +199,14 @@ export class AssetLibrary {
 
   get size(): number {
     return this.templates.size;
+  }
+
+  get status(): "ready" | "loading" | "failed" {
+    return this.loaded ? "ready" : this.failed ? "failed" : "loading";
+  }
+
+  dimensions(key: AssetKey): THREE.Vector3 | undefined {
+    return this.bounds.get(key)?.getSize(new THREE.Vector3());
   }
 
   instantiate(key: AssetKey): THREE.Group | undefined {
@@ -180,7 +221,10 @@ export class AssetLibrary {
       object.userData.sharedAsset = true;
     });
     group.userData.sharedAsset = true;
-    group.add(clone);
+    const anchor = new THREE.Group();
+    anchor.position.copy(this.anchors.get(key)!);
+    anchor.add(clone);
+    group.add(anchor);
     return group;
   }
 }

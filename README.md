@@ -35,6 +35,10 @@ npm install
 npm run dev
 ```
 
+```powershell
+npm.cmd run dev
+```
+
 Quality checks:
 
 ```sh
@@ -45,8 +49,10 @@ npm run test:e2e
 
 `npm run test:e2e` runs the full local Playwright suite, including authored
 scenery and optional visual-QA cases. CI uses `npm run test:e2e:ci` for the
-desktop ride and mobile layout smoke tests after linting, unit tests, and the
+desktop ride, mobile layout, and graphics regression tests after linting, unit tests, and the
 production build have passed.
+
+Graphics regressions run on desktop, phone, and landscape Android tablet Chromium profiles. The primary hardware target is Chrome on the Samsung Galaxy Tab A9+; the tablet profile is representative emulation, not a hardware performance measurement. See [graphics architecture and validation](docs/graphics.md).
 
 ## Architecture
 
@@ -56,11 +62,11 @@ production build have passed.
 - `src/world/` generates deterministic road chunks and renders the streamed Three.js environment.
 - `src/app.ts` owns setup, calibration, ride lifecycle, resistance restoration, and DOM UI state.
 
-World chunks are deterministic by seed and absolute index. The renderer retains two chunks behind and five, ten, or twelve ahead according to quality, disposes retired GPU resources, and rebases every two kilometers while ride distance remains absolute.
+World chunks are deterministic by seed and absolute index. The renderer retains two chunks behind and a quality-dependent range ahead capped by visibility, disposes retired GPU resources, and rebases every two kilometers while ride distance remains absolute.
 
 The city landscape applies the same bounded chunk lifecycle to an instanced urban kit inspired by Infinitown's varied town-block vocabulary. Cross streets connect to parallel side streets, neighboring building rows, rooftop fixtures, sidewalks, lane markings, and planted block edges without loading external city models or textures.
 
-Near chunks use full terrain resolution while distant chunks use simplified meshes. Smooth region weights blend meadow, woodland, lakeside, and highland scenery kits; field bands, midground groves, and distant landforms add depth beyond the roadside layer. The same seed deterministically places villages, bridges, tunnels, waterfalls, overlooks, windmills, and summit gates. Planned work is tracked in [`docs/roadmap.md`](docs/roadmap.md).
+Ground and water use shared world-space tiles with identical mesh and placement queries at every quality level. Scenery descriptors retain their identities and transforms as chunks approach; quality controls resolution, shadows, and view range, while small decorations fade with distance. Biome and district providers select coherent asset kits using independent deterministic random streams. Buildings use local-space assemblies and measured authored bounds, with foundations and cross-chunk footprint checks. The same seed deterministically places villages, bridges, tunnels, waterfalls, overlooks, windmills, and summit gates. See [graphics architecture](docs/graphics.md) for extension contracts and [`docs/roadmap.md`](docs/roadmap.md) for future work.
 
 ## GitHub Pages
 

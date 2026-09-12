@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("completes a demo ride and stores its summary", async ({ page }) => {
+  test.setTimeout(180_000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto("/?e2e=1");

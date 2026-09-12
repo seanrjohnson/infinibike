@@ -1,18 +1,20 @@
 import math
 import os
+import json
+import struct
 
 import bpy
-from mathutils import Vector
+from mathutils import Vector, Matrix, Quaternion
 
 
-PROJECT_ROOT = r"C:\projects\infinibike"
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 GLB_PATH = os.path.join(
     PROJECT_ROOT, "public", "assets", "models", "infinibike-assets.glb"
 )
 BLEND_PATH = os.path.join(
-    PROJECT_ROOT, "assets", "blender", "infinibike-assets.blend"
+    PROJECT_ROOT, "assets", "blender", "infinibike-expansion.blend"
 )
-COLLECTION_NAME = "InfinibikeAssets"
+COLLECTION_NAME = "InfinibikeExpansion"
 BEVEL_SEGMENTS = 5
 
 
@@ -171,7 +173,7 @@ def beam(parent, name, start, end, radius, mat, vertices=20, bevel=0.025):
         bevel=bevel,
     )
     obj.rotation_mode = "QUATERNION"
-    obj.rotation_quaternion = Vector((0, 1, 0)).rotation_difference(direction.normalized())
+    obj.rotation_quaternion = Vector((0, 0, 1)).rotation_difference(direction.normalized())
     return obj
 
 
@@ -232,21 +234,35 @@ def door(parent, x, y, z, width=1.2, height=2.2, mat=None):
     return panel
 
 
-def gable_roof(parent, width, depth, base_y, mat=None):
+def gable_roof(parent, width, depth, base_y, mat=None, center=(0, 0)):
     roof_mat = mat or MAT["roof"]
     angle = math.radians(28)
-    panel_width = width / 2 + 0.55
+    half_span = width / 2 + 0.35
+    panel_width = half_span / math.cos(angle)
+    rise = half_span * math.tan(angle)
     for side in (-1, 1):
         box(
             parent,
             "pitched-roof",
-            (side * width * 0.23, base_y + 0.72, 0),
+            (center[0] + side * half_span / 2, base_y + rise / 2, center[1]),
             (panel_width, 0.22, depth + 0.7),
             roof_mat,
             "roof",
             0.035,
-            rotation=(0, side * angle, 0),
+            rotation=(0, 0, -side * angle),
         )
+    # Close both ends so the sloping panels meet a solid gable, not open air.
+    for side in (-1, 1):
+        z = center[1] + side * depth / 2
+        mesh = bpy.data.meshes.new("gable-end")
+        mesh.from_pydata([
+            (center[0] - width / 2, base_y, z),
+            (center[0] + width / 2, base_y, z),
+            (center[0], base_y + rise, z),
+        ], [], [(0, 1, 2) if side > 0 else (2, 1, 0)])
+        obj = bpy.data.objects.new("gable-end", mesh)
+        parent.users_collection[0].objects.link(obj)
+        finish(obj, parent, roof_mat, bevel=0)
 
 
 def make_tree(collection, key, pine=False, broad=False):
@@ -415,11 +431,28 @@ def make_person(collection, key, skin, coat, pose=0.0, accessory=None, height=1.
     sphere(asset, "hair", (0, 2.12 * height, 0.025), (0.235, 0.12, 0.225), MAT["navy"], subdivisions=3)
     for side in (-1, 1):
         sphere(asset, "eye", (side * 0.082, 1.99 * height, -0.205), (0.026, 0.032, 0.018), MAT["black"], subdivisions=2)
+    def joint(parent, label, position):
+        obj = bpy.data.objects.new(f"{key}-{label}", None)
+        collection.objects.link(obj)
+        obj.parent = parent
+        obj.location = position
+        obj["walkJoint"] = label
+        obj["walkHeight"] = height
+        return obj
     for side in (-1, 1):
-        leg = cylinder(asset, f"{key}-left-leg" if side < 0 else f"{key}-right-leg", (side * 0.14, 0.5 * height, side * pose), 0.09, 0.95 * height, MAT["denim"], vertices=20)
-        arm = cylinder(asset, f"{key}-left-arm" if side < 0 else f"{key}-right-arm", (side * 0.38, 1.28 * height, -side * pose), 0.075, 0.85 * height, skin, vertices=20)
-        arm.rotation_euler = (-math.pi / 2, 0, side * math.radians(10))
-        box(asset, "shoe", (side * 0.14, 0.08, -0.09 + side * pose), (0.2, 0.14, 0.36), MAT["white"], bevel=0.07)
+        label = "left" if side < 0 else "right"
+        hip = joint(asset, f"{label}-hip", (side * 0.14, 0.96 * height, 0))
+        knee = joint(hip, f"{label}-knee", (0, -0.49 * height, 0))
+        ankle = joint(knee, f"{label}-ankle", (0, -0.49 * height, 0))
+        bend = math.acos(0.88 / 0.98)
+        hip.rotation_euler.x = -bend
+        knee.rotation_euler.x = 2 * bend
+        ankle.rotation_euler.x = -bend
+        for parent in (hip, knee):
+            cylinder(parent, "walking-segment", (0, -0.245 * height, 0), 0.085, 0.49 * height, MAT["denim"], vertices=12)
+        box(ankle, "walking-shoe", (0, 0, -0.09), (0.2, 0.14, 0.36), MAT["white"], bevel=0.035)
+        shoulder = joint(asset, f"{label}-shoulder", (side * 0.38, 1.65 * height, 0))
+        cylinder(shoulder, "walking-arm", (0, -0.35 * height, 0), 0.075, 0.7 * height, skin, vertices=12)
     box(asset, "jacket", (0, 1.35 * height, -0.03), (0.65, 0.78 * height, 0.46), coat, bevel=0.12)
     box(asset, "collar", (0, 1.63 * height, -0.27), (0.26, 0.18, 0.06), MAT["white"], bevel=0.04)
     if accessory == "hat":
@@ -432,13 +465,15 @@ def make_person(collection, key, skin, coat, pose=0.0, accessory=None, height=1.
 
 
 def facade_grid(parent, width, height, depth, floors, columns, y0=1.7):
-    floor_step = (height - 1.2) / max(1, floors)
+    window_height = min(1.55, (height - y0) / max(1, floors) * 0.58)
+    last_y = height - window_height / 2 - 0.35
+    floor_step = max(0, last_y - y0) / max(1, floors - 1)
     col_step = width / max(1, columns)
     for floor in range(floors):
         for col in range(columns):
             x = (col - (columns - 1) / 2) * col_step
             y = y0 + floor * floor_step
-            window(parent, x, y, -depth / 2 - 0.08, min(1.25, col_step * 0.52), min(1.55, floor_step * 0.58))
+            window(parent, x, y, -depth / 2 - 0.08, min(1.25, col_step * 0.52), window_height)
 
 
 def make_house(collection, key="house", body_mat=None):
@@ -543,7 +578,7 @@ def make_civic_building(collection, key, kind):
     asset = root(collection, key)
     if kind == "church":
         box(asset, "church-nave", (0, 3.8, 0.7), (8.0, 7.6, 12.0), MAT["siding"], bevel=0.1)
-        gable_roof(asset, 8.8, 12.8, 7.45)
+        gable_roof(asset, 8.8, 12.8, 7.45, center=(0, 0.7))
         box(asset, "church-tower", (0, 6.1, -4.3), (4.2, 12.2, 4.2), MAT["concrete"], bevel=0.1)
         cone(asset, "church-spire", (0, 13.8, -4.3), 2.55, 0.12, 4.0, MAT["roof"], vertices=32)
         door(asset, 0, 1.4, -6.48, 1.6, 2.8)
@@ -562,7 +597,7 @@ def make_civic_building(collection, key, kind):
             for y in (0.8, 1.65, 2.5, 3.35):
                 box(asset, "garage-panel", (x, y, -5.18), (2.72, 0.08, 0.08), MAT["white"], bevel=0.02)
         box(asset, "station-bell-tower", (0, 8.8, 1.8), (3.0, 3.2, 3.0), MAT["red_brick"], bevel=0.08)
-        gable_roof(asset, 3.6, 3.6, 10.25)
+        gable_roof(asset, 3.6, 3.6, 10.25, center=(0, 1.8))
     else:
         door(asset, 0, 1.35, -5.08, 1.6, 2.6)
         for x in (-6.0, -3.0, 3.0, 6.0):
@@ -812,7 +847,14 @@ def make_aircraft(collection):
 def consolidate_asset(asset):
     animated_names = ("left-leg", "right-leg", "left-arm", "right-arm", "rotor", "tail-rotor")
     meshes = [child for child in asset.children_recursive if child.type == "MESH"]
-    static_meshes = [mesh for mesh in meshes if not any(name in mesh.name for name in animated_names)]
+    def is_animated(mesh):
+        current = mesh
+        while current is not None and current != asset:
+            if "walkJoint" in current or any(name in current.name for name in animated_names):
+                return True
+            current = current.parent
+        return False
+    static_meshes = [mesh for mesh in meshes if not is_animated(mesh)]
     material_groups = {}
     for mesh in static_meshes:
         material_name = mesh.data.materials[0].name if mesh.data.materials else "unmaterialed"
@@ -830,6 +872,111 @@ def consolidate_asset(asset):
         joined = bpy.context.object
         joined.name = f"{asset['asset_key']}-{material_name}"
         joined.parent = asset
+
+
+def export_asset_metadata():
+    # Read the exported bounds, including glTF's axis conversion, exactly as the
+    # browser does. Planning must not depend on whether GLB loading has finished.
+    with open(GLB_PATH, "rb") as source:
+        data = source.read()
+    json_length = struct.unpack_from("<I", data, 12)[0]
+    document = json.loads(data[20:20 + json_length])
+
+    def local_matrix(node):
+        if "matrix" in node:
+            values = node["matrix"]
+            return Matrix([values[i::4] for i in range(4)])
+        rotation = node.get("rotation", [0, 0, 0, 1])
+        return Matrix.LocRotScale(
+            Vector(node.get("translation", [0, 0, 0])),
+            Quaternion((rotation[3], *rotation[:3])),
+            Vector(node.get("scale", [1, 1, 1])),
+        )
+
+    metadata = {}
+    for asset in document["nodes"]:
+        name = asset.get("name", "")
+        if not name.startswith("asset__"):
+            continue
+        points = []
+
+        def visit(node, parent_matrix):
+            matrix = parent_matrix @ local_matrix(node)
+            if "mesh" in node:
+                for primitive in document["meshes"][node["mesh"]]["primitives"]:
+                    accessor = document["accessors"][primitive["attributes"]["POSITION"]]
+                    low, high = accessor["min"], accessor["max"]
+                    for x in (low[0], high[0]):
+                        for y in (low[1], high[1]):
+                            for z in (low[2], high[2]):
+                                points.append(matrix @ Vector((x, y, z)))
+            for child in node.get("children", []):
+                visit(document["nodes"][child], matrix)
+
+        visit(asset, Matrix.Identity(4))
+        dimensions = [round(max(p[i] for p in points) - min(p[i] for p in points), 4) for i in range(3)]
+        if not all(math.isfinite(value) and value > 0 for value in dimensions):
+            raise ValueError(f"Invalid asset dimensions: {name}")
+        metadata[asset.get("extras", {}).get("asset_key", name[7:])] = dimensions
+    path = os.path.join(PROJECT_ROOT, "src", "world", "asset-metadata.ts")
+    with open(path, "w", encoding="utf-8") as target:
+        target.write("// Generated by tools/blender/build_asset_library.py. Dimensions include every authored part.\n")
+        target.write("export const ASSET_DIMENSIONS = " + json.dumps(metadata, indent=2, sort_keys=True) + " as const;\n")
+
+
+
+def make_city_expansion(collection):
+    specifications = [
+        ("corner_shop", 9, 8, 8, "siding"),
+        ("stepped_apartment", 11, 14, 10, "red_brick"),
+        ("balcony_apartment", 10, 12, 9, "siding"),
+        ("office_tower", 8, 23, 8, "glass"),
+        ("workshop", 14, 7, 10, "red_brick"),
+        ("hotel", 10, 13, 9, "mustard"),
+    ]
+    for key, width, height, depth, color in specifications:
+        asset = root(collection, key)
+        if key == "stepped_apartment":
+            for level in range(3):
+                w = width - level * 2.4
+                box(asset, "terraced-volume", (level * 1.2, (level + 0.5) * height / 3, 0), (w, height / 3, depth), MAT[color], bevel=0.1)
+                box(asset, "terrace-trim", (level * 1.2, (level + 1) * height / 3, 0), (w + 0.2, 0.18, depth + 0.2), MAT["white"], bevel=0.03)
+                for z in (-3, 0, 3):
+                    box(asset, "terrace-planter", (-width / 2 + level * 2.4 + 0.4, (level + 1) * height / 3 + 0.25, z), (0.65, 0.5, 1.1), MAT["wood"], bevel=0.04)
+                    sphere(asset, "terrace-green", (-width / 2 + level * 2.4 + 0.4, (level + 1) * height / 3 + 0.65, z), (0.42, 0.5, 0.6), MAT["leaf"], subdivisions=1)
+                for x in range(2):
+                    window(asset, level * 1.2 + (x - 0.5) * w / 2, (level + 0.5) * height / 3, -depth / 2 - 0.07)
+        else:
+            box(asset, "building-body", (0, height / 2, 0), (width, height, depth), MAT[color], bevel=0.12)
+            facade_grid(asset, width, height, depth, max(2, int(height / 3)), max(2, int(width / 2.5)))
+            box(asset, "roof-coping", (0, height, 0), (width + 0.3, 0.3, depth + 0.3), MAT["white"], bevel=0.04)
+        if key == "office_tower":
+            for x in (-3.6, -1.2, 1.2, 3.6):
+                for z in (-depth / 2 - 0.1, depth / 2 + 0.1):
+                    box(asset, "vertical-rib", (x, height / 2, z), (0.22, height + 0.4, 0.3), MAT["white"], bevel=0.02)
+        if key == "balcony_apartment":
+            for y in (3.4, 6.6, 9.8):
+                for x in (-2.6, 2.6):
+                    box(asset, "balcony-slab", (x, y, -depth / 2 - 0.6), (3.6, 0.18, 1.3), MAT["white"], bevel=0.03)
+                    box(asset, "balcony-rail", (x, y + 0.65, -depth / 2 - 1.15), (3.6, 0.1, 0.08), MAT["metal"], bevel=0.01)
+                    for dx in (-1.65, -0.8, 0, 0.8, 1.65):
+                        box(asset, "baluster", (x + dx, y + 0.35, -depth / 2 - 1.15), (0.07, 0.6, 0.07), MAT["metal"], bevel=0.01)
+        if key in ("corner_shop", "hotel"):
+            for i in range(10):
+                box(asset, "striped-canopy", (-width / 2 + (i + 0.5) * width / 10, 2.9, -depth / 2 - 0.7), (width / 10, 0.18, 1.5), MAT["green"] if i % 2 == 0 or key == "hotel" else MAT["white"], bevel=0.02, rotation=(0.15, 0, 0))
+            for x in (-2.7, 2.7):
+                box(asset, "shop-glass", (x, 1.4, -depth / 2 - 0.08), (2.6, 2.2, 0.12), MAT["glass"], bevel=0.02)
+        if key == "workshop":
+            for x in (-4.6, 0, 4.6):
+                mesh = bpy.data.meshes.new("sawtooth-roof")
+                mesh.from_pydata([(x + dx, height + y, z) for z in (-depth / 2, depth / 2) for dx, y in [(-2.2, 0), (2.2, 0), (-2.2, 1.8)]], [], [(0, 2, 1), (3, 4, 5), (0, 3, 5, 2), (2, 5, 4, 1), (0, 1, 4, 3)])
+                obj = bpy.data.objects.new("sawtooth-roof", mesh)
+                collection.objects.link(obj)
+                finish(obj, asset, MAT["roof"], bevel=0.02)
+                box(asset, "loading-door", (x, 1.5, -depth / 2 - 0.08), (3.2, 3, 0.12), MAT["green"], bevel=0.02)
+        else:
+            box(asset, "roof-plant", (width / 4, height + 0.55, depth / 4), (1.5, 1.1, 1.5), MAT["concrete"], bevel=0.08)
+        box(asset, "entrance", (0, 1.1, -depth / 2 - 0.08), (1.3, 2.2, 0.12), MAT["green"], bevel=0.03)
 
 
 def build_library():
@@ -880,6 +1027,7 @@ def build_library():
     make_street_assets(collection)
     make_rural_assets(collection)
     make_aircraft(collection)
+    make_city_expansion(collection)
 
     roots = [obj for obj in collection.objects if obj.parent is None]
     for asset in roots:
@@ -904,6 +1052,8 @@ def build_library():
         export_extras=True,
         export_yup=True,
     )
+    export_asset_metadata()
+    bpy.context.preferences.filepaths.save_version = 0
     bpy.ops.wm.save_as_mainfile(filepath=BLEND_PATH)
     return {
         "collection": COLLECTION_NAME,
@@ -914,4 +1064,5 @@ def build_library():
     }
 
 
-result = build_library()
+if __name__ == "__main__":
+    result = build_library()
