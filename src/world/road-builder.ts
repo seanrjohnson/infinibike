@@ -162,7 +162,7 @@ export class RoadBuilder extends SurfaceBuilder {
     road.userData.receiveOnly = true;
     group.add(road);
 
-    if (this.settings.landscape === "countryside") {
+    if (this.settings.landscape !== "city") {
       const shoulderPositions: number[] = [];
       const shoulderIndices: number[] = [];
       const outerOffset = ROAD_HALF_WIDTH_M + 1.45;
@@ -284,7 +284,7 @@ export class RoadBuilder extends SurfaceBuilder {
     markings.instanceMatrix.needsUpdate = true;
     group.add(markings);
 
-    if (this.settings.landscape === "countryside") {
+    if (this.settings.landscape !== "city") {
       const edgeOffset = ROAD_HALF_WIDTH_M - 0.24;
       const halfWidth = 0.045;
       const positions: number[] = [];

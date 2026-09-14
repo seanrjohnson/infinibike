@@ -30,16 +30,49 @@ export function markNoShadows(root: THREE.Object3D): void {
 /** Batch complete local hierarchies only after their world matrices are resolved. */
 export function batchStatic(root: THREE.Group): THREE.Group {
   root.updateMatrixWorld(true);
+  // Independently built city assemblies often contain identical primitives. Compare
+  // their actual buffers (not parameters: geometry may have been transformed).
+  const primitives = new Map<string, THREE.BufferGeometry>();
+  const canonical = new Map<THREE.BufferGeometry, THREE.BufferGeometry>();
   const batches = new Map<
     string,
     { mesh: THREE.Mesh; matrices: THREE.Matrix4[]; colors: THREE.Color[] }
   >();
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
+    if (
+      (object.geometry instanceof THREE.BoxGeometry ||
+        object.geometry instanceof THREE.CylinderGeometry ||
+        object.geometry instanceof THREE.ConeGeometry) &&
+      !object.userData.sharedAsset &&
+      !object.userData.sharedGeometry
+    ) {
+      const original = object.geometry;
+      let geometry = canonical.get(original);
+      if (!geometry) {
+        const key = JSON.stringify({
+          attributes: Object.entries(original.attributes).map(
+            ([name, attribute]) => [
+              name,
+              attribute.itemSize,
+              Array.from(attribute.array),
+            ],
+          ),
+          index: original.index ? Array.from(original.index.array) : null,
+          groups: original.groups,
+          drawRange: original.drawRange,
+        });
+        geometry = primitives.get(key) ?? original;
+        primitives.set(key, geometry);
+        canonical.set(original, geometry);
+        if (geometry !== original) original.dispose();
+      }
+      object.geometry = geometry;
+    }
     const materials = Array.isArray(object.material)
       ? object.material
       : [object.material];
-    const key = `${object.geometry.uuid}:${materials.map((m) => m.uuid).join(":")}:${Boolean(object.userData.disableShadows)}:${object.userData.sceneryCategory ?? ""}`;
+    const key = `${object.geometry.uuid}:${materials.map((m) => m.uuid).join(":")}:${Boolean(object.userData.disableShadows)}:${object.userData.sceneryCategory ?? ""}:${object.userData.biome ?? ""}`;
     const batch = batches.get(key) ?? {
       mesh: object,
       matrices: [] as THREE.Matrix4[],

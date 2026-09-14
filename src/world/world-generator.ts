@@ -1,3 +1,4 @@
+import { BIOME_CATALOG, biomeBlendAt } from "../domain/biomes";
 import { createNoise2D, type NoiseFunction2D } from "simplex-noise";
 import type {
   EnvironmentSettings,
@@ -231,7 +232,7 @@ export function terrainElevationAt(
   const waterSide =
     hashString(`${normalizedSeed}:water-side`) % 2 === 0 ? -1 : 1;
   const waterInfluence =
-    settings.landscape === "countryside" && Math.sign(offset) === waterSide
+    settings.landscape !== "city" && Math.sign(offset) === waterSide
       ? sample.region.lakeside * smoothstep((Math.abs(offset) - 24) / 22)
       : 0;
   const undulation =
@@ -368,7 +369,7 @@ export class WorldGenerator {
         (sampleIndex / CHUNK_SEGMENTS) * CHUNK_LENGTH_M,
     );
     const routeEvents =
-      this.settings.landscape === "countryside"
+      this.settings.landscape !== "city"
         ? this.countrysideRouteEventsForChunk(index)
         : [];
     for (const event of routeEvents) {
@@ -442,7 +443,7 @@ export class WorldGenerator {
   countrysideRouteEventsForChunk(
     chunkIndex: number,
   ): CountrysideRouteEventDescriptor[] {
-    if (this.settings.landscape !== "countryside" || chunkIndex < 0) return [];
+    if (this.settings.landscape === "city" || chunkIndex < 0) return [];
     const start = chunkIndex * CHUNK_LENGTH_M;
     const end = start + CHUNK_LENGTH_M;
     this.ensureCountrysideEvents(end);
@@ -514,7 +515,7 @@ export class WorldGenerator {
         ? this.cityPathAt(clampedDistance)
         : undefined;
     const countrysidePath =
-      this.settings.landscape === "countryside"
+      this.settings.landscape !== "city"
         ? this.countrysidePathAt(clampedDistance)
         : undefined;
     return {
@@ -808,6 +809,17 @@ export class WorldGenerator {
   }
 
   private regionAt(distanceM: number): RegionWeights {
+    if (this.settings.biomeGenerationVersion === 2) {
+      const weights: RegionWeights = {
+        meadow: 0,
+        woodland: 0,
+        lakeside: 0,
+        highland: 0,
+      };
+      for (const entry of biomeBlendAt(this.settings, distanceM))
+        weights[BIOME_CATALOG[entry.id].region] += entry.weight;
+      return weights;
+    }
     const scale = distanceM / 2_800;
     const woodlandRaw = smoothstep(
       (this.regionNoise(scale, 1.7) + 0.35) / 1.15,
@@ -839,7 +851,11 @@ export class WorldGenerator {
     index: number,
     region: RegionId,
   ): LandmarkDescriptor | undefined {
-    if (this.settings.landscape === "city") return undefined;
+    if (
+      this.settings.landscape === "city" ||
+      this.settings.landscape === "dreamscape"
+    )
+      return undefined;
     if (index < 2) return undefined;
     const random = seededRandom(
       hashString(`${this.seedHash}:${index}:landmark`),

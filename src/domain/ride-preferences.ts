@@ -1,4 +1,4 @@
-import { DEFAULT_ENVIRONMENT, type EnvironmentSettings } from "./environment";
+import { normalizeEnvironment, type EnvironmentSettings } from "./environment";
 import { normalizeRideMode, type RideModeSettings } from "./ride-modes";
 import { normalizeRidePhysics, type RidePhysicsSettings } from "./ride-physics";
 import type { CameraSettings } from "../world/world-scene";
@@ -51,42 +51,7 @@ export function normalizeRidePreferences(
   const e = record(stored.environment);
   const c = record(stored.cameraSettings);
   return {
-    environment: {
-      seed:
-        typeof e.seed === "string" && e.seed.trim()
-          ? e.seed.trim().slice(0, 32)
-          : DEFAULT_ENVIRONMENT.seed,
-      landscape: choice(
-        e.landscape,
-        ["city", "countryside"],
-        DEFAULT_ENVIRONMENT.landscape,
-      ),
-      terrain: choice(
-        e.terrain,
-        ["gentle", "rolling", "rugged"],
-        DEFAULT_ENVIRONMENT.terrain,
-      ),
-      density: choice(
-        e.density,
-        ["sparse", "balanced", "lush"],
-        DEFAULT_ENVIRONMENT.density,
-      ),
-      weather: choice(
-        e.weather,
-        ["clear", "cloudy", "rain"],
-        DEFAULT_ENVIRONMENT.weather,
-      ),
-      time: choice(
-        e.time,
-        ["dawn", "day", "golden", "night"],
-        DEFAULT_ENVIRONMENT.time,
-      ),
-      graphics: choice(
-        e.graphics,
-        ["automatic", "low", "medium", "high"],
-        DEFAULT_ENVIRONMENT.graphics,
-      ),
-    },
+    environment: normalizeEnvironment(e),
     rideMode: normalizeRideMode(stored.rideMode),
     ridePhysics: normalizeRidePhysics(record(stored.ridePhysics)),
     cameraSettings: {

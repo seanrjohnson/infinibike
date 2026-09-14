@@ -1,3 +1,4 @@
+import { biomeAt } from "../domain/biomes";
 import * as THREE from "three";
 import { hashString } from "../domain/random";
 import { batchStatic } from "./render-resources";
@@ -14,6 +15,7 @@ export function buildCountrysideInfrastructure(
 ): THREE.Group {
   const group = new THREE.Group();
   group.name = "countryside-infrastructure";
+  if (context.settings.landscape === "dreamscape") return group;
   const cylinder = new THREE.CylinderGeometry(1, 1, 1, 6);
   const wood = new THREE.MeshLambertMaterial({ color: 0x89704d });
   const wire = new THREE.MeshLambertMaterial({ color: 0x444d49 });
@@ -84,6 +86,11 @@ export function buildCountrysideInfrastructure(
   }
   // Every station evaluates its own exclusions, including the next chunk's support.
   const poleSupport = (distance: number) => {
+    if (
+      context.settings.biomeGenerationVersion === 2 &&
+      biomeAt(context.settings, distance, `pole:${distance}`) === "ancient-way"
+    )
+      return undefined;
     const support = point(distance, -side * 11.5);
     const footprint = {
       x: support.position.x,

@@ -2,7 +2,7 @@ import { hasCurbParking } from "./street-style";
 import { batchStatic } from "./render-resources";
 import * as THREE from "three";
 import { hashString, seededRandom } from "../domain/random";
-import { districtAt } from "./scenery-providers";
+import { environmentDistrictAt } from "./scenery-providers";
 import { renderScenery } from "./scenery-renderer";
 import {
   CHUNK_LENGTH_M,
@@ -24,8 +24,8 @@ import { SurfaceBuilder } from "./surface-builder";
 export class CityBuilder extends SurfaceBuilder {
   buildCity(chunk: WorldChunkDescriptor, detail: TerrainDetail): THREE.Group {
     const group = new THREE.Group();
-    const district = districtAt(
-      this.settings.seed,
+    const district = environmentDistrictAt(
+      this.settings,
       chunk.startDistanceM + 125,
       String(chunk.index),
     );
@@ -650,6 +650,9 @@ export class CityBuilder extends SurfaceBuilder {
             ) < 35
           ),
       );
+    group.userData.renderedMonumentIds = planned
+      .filter((item) => item.architecture?.monumental)
+      .map((item) => item.id);
     group.add(renderScenery(this.context, planned, detail));
 
     if (detail === "near") {

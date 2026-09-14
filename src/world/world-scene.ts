@@ -1,3 +1,10 @@
+import {
+  isMeadowMotion,
+  updateMeadowMotion,
+  type MeadowMotionGroup,
+} from "./meadow-monument-motion";
+import { biomeAt, type BiomeId } from "../domain/biomes";
+import { normalizeEnvironment } from "../domain/environment";
 import { streetTravel } from "./city-traffic";
 import { createCityCyclist, animateCityCyclist } from "./city-cyclist";
 import { stableShadowTarget } from "./shadow-stability";
@@ -61,6 +68,9 @@ type MovingActorKind =
   | "car"
   | "pedestrian"
   | "cyclist"
+  | "deer"
+  | "white-deer"
+  | "rabbit"
   | "cow"
   | "sheep"
   | "raccoon"
@@ -140,6 +150,10 @@ export class WorldScene {
   private readonly camera = new THREE.PerspectiveCamera(58, 1, 0.1, 1_800);
   private readonly worldRoot = new THREE.Group();
   private readonly assetLibrary = new AssetLibrary();
+  private readonly architectureGeometries = new Map<
+    string,
+    THREE.BufferGeometry
+  >();
   private startApron?: THREE.Group;
   private readonly cyclist = new THREE.Group();
   private readonly wheels: THREE.Group[] = [];
@@ -166,6 +180,7 @@ export class WorldScene {
     surface: this.surface,
     planner: new SceneryPlanner(this.generator, this.surface),
     assetLibrary: this.assetLibrary,
+    architectureGeometries: this.architectureGeometries,
     quality: "medium",
   });
   private settings = { ...DEFAULT_ENVIRONMENT };
@@ -309,12 +324,23 @@ export class WorldScene {
         scenery: (index) =>
           this.chunkBuilder.context.planner
             .plan(index)
-            .map(({ id, asset, footprint, height }) => ({
+            .map(({ id, biome, architecture, asset, footprint, height }) => ({
+              architecture,
+              biome,
               id,
               asset,
               footprint,
               height,
             })),
+        renderedCityMonuments: () => {
+          const ids: string[] = [];
+          for (const chunk of this.chunks.values())
+            chunk.group.traverse((object) => {
+              if (Array.isArray(object.userData.renderedMonumentIds))
+                ids.push(...(object.userData.renderedMonumentIds as string[]));
+            });
+          return ids;
+        },
         setDistance: (distanceM) => this.setVisualQaDistance(distanceM),
         setGraphics: (preference) => this.setGraphicsPreference(preference),
         setCamera: (mode) => {
@@ -329,8 +355,21 @@ export class WorldScene {
           this.findCountrysideRouteEvent(kind, afterM, angleDegrees),
         findMovingActor: (kind) => this.findMovingActor(kind),
         advanceActors: (seconds) => {
+          this.elapsed += Math.max(0, seconds);
           this.animateMovingScenery(Math.max(0, seconds));
           this.setVisualQaDistance(this.rideDistanceM);
+        },
+        monumentFrames: () => {
+          this.scene.updateMatrixWorld(true);
+          return this.monumentMotionGroups().map((group) => ({
+            id: String(group.userData.monumentId),
+            kind: group.userData.meadowMotion.kind,
+            ordinal: group.userData.meadowMotion.ordinal,
+            visible: group.visible,
+            active: Boolean(group.userData.motionActive),
+            rotation: group.rotation.toArray().slice(0, 3) as number[],
+            position: group.getWorldPosition(new THREE.Vector3()).toArray(),
+          }));
         },
         actorFrames: () => {
           this.scene.updateMatrixWorld(true);
@@ -353,6 +392,7 @@ export class WorldScene {
               kind: actor.kind,
               visible: actor.object.visible,
               screen: screen.toArray(),
+              position: actor.object.position.toArray(),
               joints,
             };
           });
@@ -375,7 +415,7 @@ export class WorldScene {
 
   configure(settings: EnvironmentSettings): void {
     this.settings = {
-      ...settings,
+      ...normalizeEnvironment(settings),
       seed: settings.seed.trim().toLowerCase() || "open-road",
     };
     this.generator = new WorldGenerator(this.settings);
@@ -386,6 +426,7 @@ export class WorldScene {
       surface: this.surface,
       planner: new SceneryPlanner(this.generator, this.surface),
       assetLibrary: this.assetLibrary,
+      architectureGeometries: this.architectureGeometries,
       quality: this.quality,
     });
     this.originDistanceM = 0;
@@ -416,7 +457,7 @@ export class WorldScene {
     this.rideDistanceM = this.visualQaDistanceOverride ?? snapshot.distanceM;
     if (this.rideDistanceM - this.originDistanceM >= 2_000) this.rebase();
     const sample = this.generator.sample(this.rideDistanceM);
-    if (this.settings.landscape === "countryside")
+    if (this.settings.landscape !== "city")
       this.applyRegionalGrading(sample.region);
     this.ensureChunks(this.rideDistanceM);
     this.updateCyclist(sample, snapshot.cadenceRpm, snapshot.speedKph);
@@ -523,6 +564,14 @@ export class WorldScene {
       ),
       cadenceRpm: this.cadenceRpm,
       movingActors: this.movingActors.length,
+      monumentBirds: this.monumentMotionGroups().filter(
+        (group) => group.userData.meadowMotion.kind === "dove" && group.visible,
+      ).length,
+      monumentRotors: this.monumentMotionGroups().filter(
+        (group) =>
+          group.userData.meadowMotion.kind === "sails" &&
+          group.userData.motionActive,
+      ).length,
       assetLibrary: this.assetLibrary.status,
       assetTemplates: this.assetLibrary.size,
       visibleMovingActors: this.movingActors.filter(
@@ -536,10 +585,30 @@ export class WorldScene {
         ({ kind, flockBehavior }) =>
           kind === "takeoff-flock" && flockBehavior === "disperse",
       ).length,
+      ...Object.fromEntries(
+        (
+          [
+            "wildlife-meadows",
+            "ancient-way",
+            "arcaded-city",
+            "brutalist-gardens",
+            "dreamwood",
+          ] as BiomeId[]
+        ).map((id) => {
+          let instances = 0;
+          for (const chunk of this.chunks.values())
+            chunk.group.traverse((object) => {
+              if (object instanceof THREE.Mesh && object.userData.biome === id)
+                instances +=
+                  object instanceof THREE.InstancedMesh ? object.count : 1;
+            });
+          return [`biome:${id}`, instances];
+        }),
+      ),
       landscape: this.settings.landscape,
       urbanChunks: this.settings.landscape === "city" ? this.chunks.size : 0,
       waterChunks:
-        this.settings.landscape === "countryside"
+        this.settings.landscape !== "city"
           ? [...this.chunks.values()].filter(
               ({ descriptor }) => descriptor.region.lakeside >= 0.18,
             ).length
@@ -564,6 +633,7 @@ export class WorldScene {
     this.animateCyclist(visualDt);
     this.updateCamera(visualDt === 0 ? 10 : dt);
     this.animateMovingScenery(visualDt);
+    this.animateMonuments();
     this.renderer.info.reset();
     const renderStart = performance.now();
     this.renderer.render(this.scene, this.camera);
@@ -1021,7 +1091,10 @@ export class WorldScene {
         );
       }
     } else {
-      const species: MovingActorKind[] = ["cow", "sheep", "sheep", "raccoon"];
+      const species: MovingActorKind[] =
+        this.settings.landscape === "dreamscape"
+          ? []
+          : ["cow", "sheep", "sheep", "raccoon"];
       species.forEach((kind, index) => {
         add(
           kind,
@@ -1032,14 +1105,15 @@ export class WorldScene {
           random() < 0.5 ? -1 : 1,
         );
       });
-      add(
-        "dinosaur",
-        2_200 + random() * 2_000,
-        7_000 + random() * 3_000,
-        random() < 0.5 ? -1 : 1,
-        2.2,
-        random() < 0.5 ? -1 : 1,
-      );
+      if (this.settings.biomeGenerationVersion !== 2)
+        add(
+          "dinosaur",
+          2_200 + random() * 2_000,
+          7_000 + random() * 3_000,
+          random() < 0.5 ? -1 : 1,
+          2.2,
+          random() < 0.5 ? -1 : 1,
+        );
       for (let index = 0; index < 2; index += 1) {
         add(
           "sky-birds",
@@ -1062,6 +1136,35 @@ export class WorldScene {
           index < 2 ? "powerline" : "ground",
           index % 2 === 0 ? "cohere" : "disperse",
         );
+      }
+    }
+
+    if (
+      this.settings.biomeGenerationVersion === 2 &&
+      this.settings.landscape !== "city"
+    ) {
+      const dream = this.settings.landscape === "dreamscape";
+      const groups = 3;
+      for (let slot = 0; slot < groups; slot++) {
+        const kinds: MovingActorKind[] = dream
+          ? ["white-deer", "white-deer", "white-deer"]
+          : ["deer", "deer", "sheep", "rabbit"];
+        kinds.forEach((kind, member) => {
+          add(
+            kind,
+            130 + slot * 300 + member * 4,
+            1000,
+            1,
+            0.4 + member * 0.1,
+            slot % 2 ? -1 : 1,
+          );
+          const actor = this.movingActors[this.movingActors.length - 1]!;
+          actor.object.userData.requiredBiome = dream
+            ? "dreamwood"
+            : "wildlife-meadows";
+          actor.object.userData.herdOffset = member * 1.8;
+          actor.object.userData.herdSlot = slot;
+        });
       }
     }
 
@@ -1117,8 +1220,13 @@ export class WorldScene {
         ? personKeys[Math.floor(random() * personKeys.length)]!
         : kind === "car"
           ? carKeys[Math.floor(random() * carKeys.length)]!
-          : kind;
-    const asset = this.assetLibrary.instantiate(assetKey);
+          : kind === "white-deer" || kind === "rabbit"
+            ? "deer"
+            : kind;
+    const asset =
+      kind === "deer" || kind === "white-deer" || kind === "rabbit"
+        ? undefined
+        : this.assetLibrary.instantiate(assetKey);
     if (asset) return asset;
     const group = new THREE.Group();
     const lambert = (color: number): THREE.MeshLambertMaterial =>
@@ -1201,11 +1309,14 @@ export class WorldScene {
       sheep: 0xd9d7c9,
       raccoon: 0x6c716e,
       dinosaur: 0x5d7d48,
+      deer: 0xb2865d,
+      "white-deer": 0xe6e7e0,
+      rabbit: 0xb4a493,
     };
     const size =
       kind === "dinosaur"
         ? 3.4
-        : kind === "cow"
+        : kind === "cow" || kind === "deer" || kind === "white-deer"
           ? 1.2
           : kind === "sheep"
             ? 0.9
@@ -1223,7 +1334,48 @@ export class WorldScene {
       kind === "raccoon" ? 0x3e4443 : animalColors[kind]!,
     );
     head.position.set(0, size * 1.05, -size * 0.92);
+    head.name = "animal-head";
     group.add(body, head);
+    if (kind === "deer" || kind === "white-deer" || kind === "rabbit") {
+      if (kind !== "rabbit") {
+        body.scale.set(0.7, 0.7, 1.5);
+        head.position.y = size * 1.6;
+        const neck = mesh(
+          new THREE.CylinderGeometry(size * 0.16, size * 0.25, size * 0.9, 6),
+          animalColors[kind]!,
+        );
+        neck.position.set(0, size * 1.2, -size * 0.7);
+        neck.rotation.x = 0.3;
+        group.add(neck);
+      }
+      for (const side of [-1, 1]) {
+        const ear = mesh(
+          new THREE.SphereGeometry(size * 0.1, 6, 4),
+          animalColors[kind]!,
+        );
+        ear.scale.set(0.7, kind === "rabbit" ? 4 : 2, 1);
+        ear.position.set(side * size * 0.2, size * 0.35, 0);
+        ear.rotation.z = side * -0.35;
+        head.add(ear);
+        if (kind !== "rabbit") {
+          const antler = mesh(
+            new THREE.CylinderGeometry(0.025, 0.045, 0.8, 5),
+            0x8c7964,
+          );
+          antler.position.set(side * 0.2, 0.6, 0.05);
+          antler.rotation.z = side * -0.35;
+          head.add(antler);
+          const tine = mesh(
+            new THREE.CylinderGeometry(0.015, 0.03, 0.35, 5),
+            0x8c7964,
+          );
+          tine.rotation.z = side * 0.8;
+          tine.position.set(side * 0.3, 0.75, 0.05);
+          head.add(tine);
+        }
+      }
+    }
+
     if (kind === "dinosaur") {
       body.scale.set(0.62, 0.9, 1.5);
       body.position.y = 3.8;
@@ -1414,10 +1566,30 @@ export class WorldScene {
   ): void {
     actor.object.visible = relativeDistance > -120 && relativeDistance < 720;
     if (!actor.object.visible) return;
+    const requiredBiome = actor.object.userData.requiredBiome as
+      BiomeId | undefined;
+    const groupLimit =
+      this.quality === "low" ? 1 : this.quality === "medium" ? 2 : 3;
+    if (requiredBiome && Number(actor.object.userData.herdSlot) >= groupLimit) {
+      actor.object.visible = false;
+      return;
+    }
+    if (
+      requiredBiome &&
+      biomeAt(
+        this.settings,
+        actor.routeDistanceM,
+        `herd:${Math.floor(actor.routeDistanceM / 1000)}`,
+      ) !== requiredBiome
+    ) {
+      actor.object.visible = false;
+      return;
+    }
     const flying = actor.kind === "sky-birds";
     const travel = flying
       ? Math.sin(this.elapsed * 0.22 + actor.phase) * 85
-      : Math.sin(this.elapsed * actor.speedMps * 0.22 + actor.phase) * 9;
+      : Math.sin(this.elapsed * actor.speedMps * 0.22 + actor.phase) *
+        (requiredBiome ? 3 : 9);
     const road = this.generator.sample(
       Math.max(0, actor.routeDistanceM + travel),
     );
@@ -1429,16 +1601,47 @@ export class WorldScene {
           : actor.kind === "raccoon"
             ? 10.5
             : 19;
-    const offset = actor.side * baseOffset;
+    const offset =
+      actor.side * (baseOffset + Number(actor.object.userData.herdOffset ?? 0));
     const ground = this.terrainElevationAt(road, offset);
     const altitude = flying
       ? 16 + Math.sin(this.elapsed * 0.7 + actor.phase) * 2.5
-      : 0;
+      : actor.kind === "rabbit"
+        ? Math.max(0, Math.sin(this.elapsed * 5 + actor.phase)) * 0.4
+        : 0;
     actor.object.position.set(
       road.x - this.originX + Math.cos(road.heading) * offset,
       ground - this.originElevation + altitude,
       road.z - this.originZ + Math.sin(road.heading) * offset,
     );
+    if (!flying && this.settings.biomeGenerationVersion === 2) {
+      const x = road.x + Math.cos(road.heading) * offset;
+      const z = road.z + Math.sin(road.heading) * offset;
+      const supports = [
+        [0, 0],
+        [-1.5, -1.5],
+        [1.5, 1.5],
+      ].map(([dx, dz]) =>
+        this.surface.sample(x + dx!, z + dz!, road.distanceM),
+      );
+      if (
+        supports.some(
+          (support) =>
+            support.kind === "road" ||
+            support.kind === "water" ||
+            support.normal.y < 0.9,
+        )
+      ) {
+        actor.object.visible = false;
+        return;
+      }
+      actor.object.position.y =
+        supports[0]!.height - this.originElevation + altitude;
+      const head = actor.object.getObjectByName("animal-head");
+      if (head)
+        head.rotation.x =
+          0.2 + Math.sin(this.elapsed * 0.7 + actor.phase) * 0.25;
+    }
     actor.object.rotation.y =
       -road.heading + (actor.direction < 0 ? Math.PI : 0);
     if (flying) {
@@ -1655,9 +1858,57 @@ export class WorldScene {
   ): THREE.Group {
     const start = performance.now();
     const group = this.chunkBuilder.build(chunk, detail);
+    const motion: MeadowMotionGroup[] = [];
+    group.traverse((object) => {
+      if (isMeadowMotion(object)) motion.push(object);
+    });
+    group.userData.meadowMotionGroups = motion;
     this.lastChunkBuildMs = performance.now() - start;
     setShadow(group, detail === "near" && QUALITY[this.quality].shadows);
     return group;
+  }
+
+  private monumentMotionGroups(): MeadowMotionGroup[] {
+    return [...this.chunks.values()].flatMap(
+      (chunk) =>
+        (chunk.group.userData.meadowMotionGroups ?? []) as MeadowMotionGroup[],
+    );
+  }
+
+  private animateMonuments(): void {
+    const groups = this.monumentMotionGroups().sort(
+      (a, b) =>
+        Math.abs(Number(a.userData.distanceM) - this.rideDistanceM) -
+          Math.abs(Number(b.userData.distanceM) - this.rideDistanceM) ||
+        String(a.userData.monumentId).localeCompare(
+          String(b.userData.monumentId),
+        ) ||
+        a.userData.meadowMotion.ordinal - b.userData.meadowMotion.ordinal,
+    );
+    const birds =
+      this.quality === "low" ? 4 : this.quality === "medium" ? 8 : 12;
+    const rotors =
+      this.quality === "low" ? 2 : this.quality === "medium" ? 4 : 6;
+    let bird = 0,
+      rotor = 0,
+      drift = 0;
+    for (const group of groups) {
+      const nearby =
+        Math.abs(Number(group.userData.distanceM) - this.rideDistanceM) < 700;
+      const active =
+        nearby &&
+        (group.userData.meadowMotion.kind === "dove"
+          ? bird++ < birds
+          : group.userData.meadowMotion.kind === "drift"
+            ? drift++ < rotors
+            : rotor++ < rotors);
+      group.userData.motionActive = active;
+      updateMeadowMotion(
+        group,
+        this.cameraSettings.reducedMotion ? 0 : this.elapsed,
+        active,
+      );
+    }
   }
 
   private terrainElevationAt(sample: RoadSample, offset: number): number {
@@ -2077,13 +2328,14 @@ export class WorldScene {
     this.rideDistanceM = targetDistance;
     if (this.rideDistanceM - this.originDistanceM >= 2_000) this.rebase();
     const sample = this.generator.sample(this.rideDistanceM);
-    if (this.settings.landscape === "countryside")
+    if (this.settings.landscape !== "city")
       this.applyRegionalGrading(sample.region);
     this.ensureChunks(this.rideDistanceM);
     this.updateCyclist(sample, this.cadenceRpm, this.speedKph);
     this.updateCamera(10);
     this.animateWeather(0);
     this.animateMovingScenery(0);
+    this.animateMonuments();
     this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
     this.renderedFrames++;
@@ -2189,6 +2441,8 @@ export class WorldScene {
       disposeObject(chunk.group);
     }
     this.chunks.clear();
+    this.architectureGeometries.forEach((geometry) => geometry.dispose());
+    this.architectureGeometries.clear();
     this.worldRoot.position.set(
       -this.originX,
       -this.originElevation,
@@ -2203,6 +2457,8 @@ declare global {
     __INFINIBIKE_VISUAL_QA__?: {
       freeze: () => void;
       scenery: (index: number) => {
+        biome?: BiomeId;
+        architecture?: import("./architecture-generator").ArchitecturePlan;
         id: string;
         asset: string;
         footprint: {
@@ -2214,6 +2470,7 @@ declare global {
         };
         height: number;
       }[];
+      renderedCityMonuments: () => string[];
       setDistance: (distanceM: number) => void;
       setGraphics: (preference: GraphicsPreference) => void;
       setCamera: (mode: CameraMode) => void;
@@ -2231,10 +2488,20 @@ declare global {
       ) => number;
       findMovingActor: (kind: MovingActorKind) => number;
       advanceActors: (seconds: number) => void;
+      monumentFrames: () => {
+        id: string;
+        kind: string;
+        ordinal: number;
+        visible: boolean;
+        active: boolean;
+        rotation: number[];
+        position: number[];
+      }[];
       actorFrames: () => {
         kind: string;
         visible: boolean;
         screen: number[];
+        position: number[];
         joints: { name: string; position: number[] }[];
       }[];
     };

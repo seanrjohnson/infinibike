@@ -1,3 +1,9 @@
+import { isMeadowMotion } from "./meadow-monument-motion";
+import {
+  OBSERVATORY_FOOTINGS,
+  OBSERVATORY_PALETTES,
+} from "./wildlife-observatory";
+import { BiomeScenery } from "./biome-scenery";
 import * as THREE from "three";
 import type { TerrainDetail } from "./render-quality";
 import { hashString } from "../domain/random";
@@ -12,27 +18,50 @@ export function renderScenery(
   detail: TerrainDetail = "near",
 ): THREE.Group {
   const root = new THREE.Group();
+  const animations = new THREE.Group();
+  animations.name = "monument-animations";
   root.name = "planned-scenery";
   root.userData.sceneryIds = descriptors.map((d) => d.id);
-  const box = new THREE.BoxGeometry(1, 1, 1);
-  const crownGeometry = new THREE.SphereGeometry(1, 10, 7);
-  const pineGeometry = new THREE.ConeGeometry(1, 1, 9);
-  const trunkGeometry = new THREE.CylinderGeometry(0.5, 0.65, 1, 7);
-  const gable = new THREE.BufferGeometry();
-  gable.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(
-      [
-        -0.5, 0, -0.5, 0.5, 0, -0.5, 0, 1, -0.5, -0.5, 0, 0.5, 0.5, 0, 0.5, 0,
-        1, 0.5,
-      ],
-      3,
-    ),
+  const cache = context.architectureGeometries;
+  const geometry = (key: string, create: () => THREE.BufferGeometry) => {
+    const existing = cache?.get(key);
+    if (existing) return existing;
+    const created = create();
+    cache?.set(key, created);
+    return created;
+  };
+  const box = geometry("scenery-box", () => new THREE.BoxGeometry(1, 1, 1));
+  const themed = new BiomeScenery(box, context.architectureGeometries);
+  const crownGeometry = geometry(
+    "scenery-crown",
+    () => new THREE.SphereGeometry(1, 10, 7),
   );
-  gable.setIndex([
-    0, 2, 1, 3, 4, 5, 0, 3, 5, 0, 5, 2, 1, 2, 5, 1, 5, 4, 0, 1, 4, 0, 4, 3,
-  ]);
-  gable.computeVertexNormals();
+  const pineGeometry = geometry(
+    "scenery-pine",
+    () => new THREE.ConeGeometry(1, 1, 9),
+  );
+  const trunkGeometry = geometry(
+    "scenery-trunk",
+    () => new THREE.CylinderGeometry(0.5, 0.65, 1, 7),
+  );
+  const gable = geometry("scenery-gable", () => {
+    const gable = new THREE.BufferGeometry();
+    gable.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(
+        [
+          -0.5, 0, -0.5, 0.5, 0, -0.5, 0, 1, -0.5, -0.5, 0, 0.5, 0.5, 0, 0.5, 0,
+          1, 0.5,
+        ],
+        3,
+      ),
+    );
+    gable.setIndex([
+      0, 2, 1, 3, 4, 5, 0, 3, 5, 0, 5, 2, 1, 2, 5, 1, 5, 4, 0, 1, 4, 0, 4, 3,
+    ]);
+    gable.computeVertexNormals();
+    return gable;
+  });
   const materials = new Map<number, THREE.MeshLambertMaterial>();
   const material = (color: number) => {
     let mat = materials.get(color);
@@ -88,7 +117,9 @@ export function renderScenery(
         (descriptor.category === "building"
           ? footprint.halfAcross
           : footprint.halfAlong) * 2;
+    const themedBuilt = themed.build(group, descriptor, simplified);
     const useAuthored =
+      !themedBuilt &&
       !simplified &&
       (descriptor.category !== "building" ||
         hashString(descriptor.id) % 3 === 0 ||
@@ -106,7 +137,9 @@ export function renderScenery(
     const asset = dimensions
       ? context.assetLibrary.instantiate(descriptor.asset)
       : undefined;
-    if (asset && dimensions) {
+    if (themedBuilt) {
+      group.userData.biome = descriptor.biome;
+    } else if (asset && dimensions) {
       asset.scale.set(
         width / dimensions.x,
         descriptor.height / dimensions.y,
@@ -136,7 +169,11 @@ export function renderScenery(
         }
       }
       group.add(asset);
-    } else if (descriptor.category === "building") {
+    } else if (
+      descriptor.category === "building" &&
+      descriptor.architecture?.form !== "floating-monastery" &&
+      descriptor.architecture?.form !== "whale-conservatory"
+    ) {
       for (const part of buildingParts(
         width,
         descriptor.height,
@@ -202,7 +239,135 @@ export function renderScenery(
         descriptor.asset === "rock_cluster" ? 0x7c8178 : 0x879064,
       );
     }
-    if (descriptor.category === "building") {
+    if (descriptor.architecture?.form === "wildlife-observatory") {
+      const plan = descriptor.architecture;
+      const palette =
+        OBSERVATORY_PALETTES[plan.palette % OBSERVATORY_PALETTES.length]!;
+      for (const [x, z] of OBSERVATORY_FOOTINGS) {
+        const localX = x * width * plan.mirror,
+          localZ = z * depth;
+        const angle = descriptor.rotationY;
+        const ground = context.surface.sample(
+          footprint.x + Math.cos(angle) * localX + Math.sin(angle) * localZ,
+          footprint.z - Math.sin(angle) * localX + Math.cos(angle) * localZ,
+          descriptor.distanceM,
+        ).height;
+        const bottom = ground - support.baseY;
+        addBox(
+          group,
+          [1.55, 0.35, 1.55],
+          [localX, bottom + 0.025, localZ],
+          0x868378,
+        );
+        const top = plan.height * 0.025;
+        const length = top - bottom;
+        addBox(
+          group,
+          [1.0, length, 1.0],
+          [localX, bottom + length / 2, localZ],
+          palette.wall,
+        );
+      }
+    } else if (descriptor.architecture?.form === "suspension-bridge") {
+      // Individual tower/abutment footings preserve the open space below the deck.
+      const points = [
+        ...[-0.28, 0.28].flatMap((x) =>
+          [-0.12, 0.12].map((z) => [x, z, 0.09, 0.1]),
+        ),
+        [-0.43, 0, 0.1, 0.28],
+        [0.43, 0, 0.1, 0.28],
+        [-0.43, -0.22, 0.1, 0.09],
+        [0.43, 0.22, 0.1, 0.09],
+      ];
+      for (const [nx, nz, nw, nd] of points) {
+        const x = nx! * width * descriptor.architecture.mirror,
+          z = nz! * depth;
+        const angle = descriptor.rotationY;
+        const ground =
+          context.surface.sample(
+            footprint.x + Math.cos(angle) * x + Math.sin(angle) * z,
+            footprint.z - Math.sin(angle) * x + Math.cos(angle) * z,
+            descriptor.distanceM,
+          ).height - support.baseY;
+        const bottom = Math.min(ground - 0.15, -0.15),
+          top = 0.02 * descriptor.height;
+        addBox(
+          group,
+          [nw! * width, top - bottom, nd! * depth],
+          [x, (top + bottom) / 2, z],
+          0x85867d,
+        );
+      }
+    } else if (descriptor.architecture?.form === "stone-viaduct") {
+      // Ground every pier independently, leaving the valley visible below arches.
+      const count = descriptor.architecture.bays + 4;
+      for (let i = 0; i <= count; i++) {
+        const x =
+          (-0.44 + (i * 0.88) / count) * width * descriptor.architecture.mirror;
+        const ground =
+          context.surface.sample(
+            footprint.x + Math.cos(descriptor.rotationY) * x,
+            footprint.z - Math.sin(descriptor.rotationY) * x,
+            descriptor.distanceM,
+          ).height - support.baseY;
+        const height = Math.max(0.1, -ground + 0.06);
+        addBox(
+          group,
+          [((width * 0.88) / count) * 0.26, height, depth * 0.2],
+          [x, 0.06 - height / 2, 0],
+          0x85867d,
+        );
+        addBox(
+          group,
+          [((width * 0.88) / count) * 0.4, 0.3, depth * 0.28],
+          [x, ground, 0],
+          0xa3a08f,
+        );
+      }
+    } else if (descriptor.architecture?.form === "historic-farmstead") {
+      const foundationHeight = support.baseY - support.bottomY;
+      addBox(
+        group,
+        [width * 0.96, foundationHeight, depth * 0.81],
+        [0, -foundationHeight / 2, depth * 0.065],
+        0xa29780,
+      );
+      for (const side of [-1, 1])
+        addBox(
+          group,
+          [width * 0.42, foundationHeight, depth * 0.13],
+          [side * width * 0.27, -foundationHeight / 2, -depth * 0.405],
+          0xa29780,
+        );
+      const angle = descriptor.rotationY;
+      const ground = context.surface.sample(
+        footprint.x - Math.sin(angle) * depth * 0.48,
+        footprint.z - Math.cos(angle) * depth * 0.48,
+        descriptor.distanceM,
+      ).height;
+      const top = descriptor.height * 0.032;
+      const bottom = Math.min(ground - support.baseY, top - 0.05);
+      const floor = Math.min(support.bottomY - support.baseY, bottom - 0.15);
+      const steps = Math.max(2, Math.ceil((top - bottom) / 0.24));
+      for (let step = 0; step < steps; step++) {
+        const tread = bottom + ((top - bottom) * (step + 1)) / steps;
+        const height = tread - floor;
+        addBox(
+          group,
+          [width * 0.12, height, (depth * 0.14) / steps + 0.01],
+          [
+            0,
+            tread - height / 2,
+            depth * (-0.48 + ((step + 0.5) * 0.14) / steps),
+          ],
+          0xb4a78e,
+        );
+      }
+    } else if (
+      descriptor.category === "building" &&
+      descriptor.architecture?.form !== "floating-monastery" &&
+      descriptor.architecture?.form !== "whale-conservatory"
+    ) {
       const foundationHeight = support.baseY - support.bottomY;
       addBox(
         group,
@@ -213,20 +378,42 @@ export function renderScenery(
     }
     group.traverse((object) => {
       if (object instanceof THREE.Mesh) {
+        if (cache && [...cache.values()].includes(object.geometry))
+          object.userData.sharedGeometry = true;
         object.userData.sceneryCategory = descriptor.category;
+        object.userData.biome = descriptor.biome;
+        object.userData.architecture = descriptor.architecture?.form;
+        object.userData.architectureLandmark =
+          descriptor.architecture?.landmark;
         if (simplified) object.userData.disableShadows = true;
       }
     });
+    const moving = group.children.filter(isMeadowMotion);
+    if (moving.length) {
+      const frame = new THREE.Group();
+      frame.position.copy(group.position);
+      frame.quaternion.copy(group.quaternion);
+      for (const motion of moving) {
+        motion.userData.distanceM = descriptor.distanceM;
+        motion.userData.monumentId = descriptor.id;
+        frame.add(motion);
+      }
+      animations.add(frame);
+    }
     root.add(group);
   }
-  if (!boxUsed) box.dispose();
-  if (!gableUsed) gable.dispose();
-  if (!treeGeometryUsed) {
+  if (!cache && !boxUsed && !themed.usesBox) box.dispose();
+  if (!cache && !gableUsed) gable.dispose();
+  if (!cache && !treeGeometryUsed) {
     trunkGeometry.dispose();
   }
-  if (!crownUsed) crownGeometry.dispose();
-  if (!pineUsed) pineGeometry.dispose();
+  if (!cache && !crownUsed) crownGeometry.dispose();
+  if (!cache && !pineUsed) pineGeometry.dispose();
   const result = batchStatic(root);
+  result.userData.renderedMonumentIds = descriptors
+    .filter((item) => item.architecture?.monumental)
+    .map((item) => item.id);
+  result.add(animations);
   fadeDecoration(result);
   return result;
 }

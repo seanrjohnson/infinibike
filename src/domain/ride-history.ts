@@ -46,7 +46,7 @@ export function validateRideHistory(value: unknown): RideSummary[] {
         goalCompleted: ride.goalCompleted === true,
         ftpW: typeof ride.ftpW === "number" ? ride.ftpW : 220,
         samples: Array.isArray(ride.samples) ? ride.samples : [],
-        environment: normalizeEnvironment(ride.environment ?? {}),
+        environment: normalizeEnvironment(ride.environment ?? {}, 1),
       } as RideSummary,
     ];
   });
@@ -86,7 +86,7 @@ export function createRideSummary(
     elevationGainM: snapshot.elevationGainM,
     averagePowerW: snapshot.averagePowerW,
     maxPowerW: snapshot.maxPowerW,
-    environment: { ...environment },
+    environment: normalizeEnvironment(environment),
     rideMode: { ...rideMode },
     goalCompleted,
     ftpW,

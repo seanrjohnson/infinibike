@@ -2,7 +2,11 @@
 
 Infinibike is an endless, procedurally generated 3D environment for indoor cycling. It reads power and cadence from a Bluetooth FTMS smart trainer, maps calibrated effort and generated road grade to virtual speed, and can optionally apply bounded terrain resistance to compatible trainers.
 
-Choose between the original countryside and a city landscape. City seeds deterministically stream residential, downtown, industrial, and park districts with varied buildings, windows, sidewalks, crossings, streetlights, and urban trees along a flatter road profile.
+Choose Countryside, City, or Dreamscape. Countryside mixes meadow, woodland, lakeside, highland, Wildlife Meadows, and the Roman-inspired Ancient Way. City adds Arcaded City and Brutalist Gardens to its residential, shopping, downtown, industrial, and park districts. Dreamscape opens with Dreamwood: giant mushrooms, luminous plants, floating stones, and white deer.
+
+Expand **Biome frequency** beneath Landscape to set each biome to Off, Rare, Normal, or Frequent. Estimated shares describe longer rides, and at least one biome stays enabled. Choices are remembered separately for each landscape; Reset defaults restores the selected landscape. New rides select seeded 1 km biome sections with 250 m transitions, without changing the road route or grades. Saved rides retain their biome mix; older history entries replay with legacy biome generation.
+
+Buildings draw on 33 procedural architectural forms with seeded proportions, rooflines, terraces, courts, and towers. Neighborhood palettes and skyline height change along the route, with occasional landmark buildings to keep longer rides varied. Ancient Way also includes seven rare monumental families: Colosseum-inspired arenas, Circus Maximus racecourses, great aqueducts, Acropolis temple groups, Greek theatres, sphinxes, and pyramid complexes.
 
 The app is a static Vite/TypeScript SPA. Trainer telemetry and ride history remain in the browser; there is no account or server.
 

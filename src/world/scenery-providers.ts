@@ -1,3 +1,5 @@
+import { biomeAt, type BiomeId } from "../domain/biomes";
+import type { EnvironmentSettings } from "../domain/environment";
 import { hashString, seededRandom } from "../domain/random";
 import type { AssetKey } from "./asset-library";
 import type { CityDistrict } from "./building-catalog";
@@ -107,4 +109,26 @@ export function districtAt(
   return sceneryRandom(seed, "district-transition", objectId)() < blend
     ? districtCell(seed, cell)
     : districtCell(seed, cell - 1);
+}
+
+/** Existing district grammar remains useful for street furniture and parcel sizing. */
+export function districtForBiome(id: BiomeId): CityDistrict {
+  if (id === "arcaded-city") return "shopping";
+  if (id === "brutalist-gardens") return "downtown";
+  return id === "residential" ||
+    id === "shopping" ||
+    id === "downtown" ||
+    id === "industrial" ||
+    id === "park"
+    ? id
+    : "park";
+}
+export function environmentDistrictAt(
+  settings: EnvironmentSettings,
+  distance: number,
+  id: string,
+): CityDistrict {
+  return settings.biomeGenerationVersion === 2
+    ? districtForBiome(biomeAt(settings, distance, id))
+    : districtAt(settings.seed, distance, id);
 }

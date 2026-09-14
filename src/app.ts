@@ -1,4 +1,15 @@
 import {
+  BIOME_CATALOG,
+  LANDSCAPE_LABELS,
+  FREQUENCY_WEIGHTS,
+  biomeShares,
+  biomesFor,
+  defaultBiomeFrequencies,
+  type BiomeFrequency,
+  type BiomeId,
+} from "./domain/biomes";
+import { normalizeEnvironment } from "./domain/environment";
+import {
   loadRidePreferences,
   PREFERENCES_KEY,
   writeStored,
@@ -353,6 +364,7 @@ export class InfinibikeApp {
   }
 
   private showSetup(): void {
+    if (!this.pendingReplay) this.environment.biomeGenerationVersion = 2;
     this.view = "setup";
     this.world.setRealtime(false);
     const status = this.source?.getStatus();
@@ -374,7 +386,8 @@ export class InfinibikeApp {
           <div class="inline-actions">${demo ? "" : `<button id="guided">${this.profile ? "Recalibrate" : "Guided calibration"}</button>`}<button id="manual">Enter wattages</button></div>
           <div class="configuration-grid">
             <label class="seed-field"><span>World seed</span><div class="input-with-action"><input id="seed" maxlength="32" value="${escapeHtml(this.environment.seed)}"><button id="random-seed" class="icon-button" title="Randomize seed"><i data-lucide="dices"></i></button></div></label>
-            <label><span>Landscape</span><select id="landscape">${option("countryside", "Countryside", this.environment.landscape)}${option("city", "City", this.environment.landscape)}</select></label>
+            <label><span>Landscape</span><select id="landscape">${option("countryside", "Countryside", this.environment.landscape)}${option("city", "City", this.environment.landscape)}${option("dreamscape", "Dreamscape", this.environment.landscape)}</select></label>
+            <details id="biome-settings" class="biome-settings"><summary>Biome frequency</summary><p>Choose how often each biome appears. Estimated shares describe longer rides; short rides may vary.</p><div id="biome-controls"></div><p id="biome-message" role="status" aria-live="polite"></p><button id="reset-biomes" type="button">Reset defaults</button></details>
             <label><span>Ride mode</span><select id="ride-mode">${option("free", "Free Ride", this.rideMode.mode)}${option("endurance", "Endurance", this.rideMode.mode)}${option("hill", "Hill Challenge", this.rideMode.mode)}${option("intervals", "Intervals", this.rideMode.mode)}</select></label>
             <label id="ride-goal-field"><span>Goal</span><select id="ride-goal"></select></label>
             <label><span>Simulation</span><select id="simulation">${option("scenic", "Scenic", this.ridePhysics.preset)}${option("realistic", "Realistic", this.ridePhysics.preset)}</select></label>
@@ -403,6 +416,7 @@ export class InfinibikeApp {
     `;
     this.icons();
     this.updateRideGoalOptions();
+    this.renderBiomeControls();
     this.bindSetupControls();
   }
 
@@ -422,15 +436,54 @@ export class InfinibikeApp {
       this.readEnvironment();
       this.persistPreferences();
     });
-    this.root.querySelectorAll("input, select").forEach((control) => {
-      control.addEventListener("change", () => {
-        this.readEnvironment();
-        this.readRideMode();
-        this.readRidePhysics();
-        this.readRideExperience();
+    this.root
+      .querySelectorAll("input:not([data-biome]), select:not([data-biome])")
+      .forEach((control) => {
+        control.addEventListener("change", () => {
+          this.readEnvironment();
+          this.readRideMode();
+          this.readRidePhysics();
+          this.readRideExperience();
+          this.persistPreferences();
+        });
+      });
+    this.root
+      .querySelector("#landscape")
+      ?.addEventListener("change", () => this.renderBiomeControls());
+    this.root.querySelector("#reset-biomes")?.addEventListener("click", () => {
+      this.environment.biomeFrequencies[this.environment.landscape] =
+        defaultBiomeFrequencies()[this.environment.landscape];
+      this.environment.biomeGenerationVersion = 2;
+      this.renderBiomeControls();
+      this.world.configure(this.environment);
+      this.persistPreferences();
+    });
+    this.root
+      .querySelector("#biome-controls")
+      ?.addEventListener("change", (event) => {
+        const select = event.target as HTMLSelectElement;
+        const id = select.dataset.biome as BiomeId | undefined;
+        if (!id) return;
+        const level = this.environment.landscape;
+        const group = this.environment.biomeFrequencies[level];
+        if (
+          select.value === "off" &&
+          biomesFor(level).every(
+            (other) => other === id || group[other] === "off",
+          )
+        ) {
+          select.value = group[id] ?? "normal";
+          this.root.querySelector("#biome-message")!.textContent =
+            "Keep at least one biome enabled.";
+          return;
+        }
+        group[id] = select.value as BiomeFrequency;
+        this.environment.biomeGenerationVersion = 2;
+        this.updateBiomeShares();
+        this.root.querySelector("#biome-message")!.textContent = "";
+        this.world.configure(this.environment);
         this.persistPreferences();
       });
-    });
     this.root.querySelector("#ride-mode")?.addEventListener("change", () => {
       this.readRideMode();
       this.updateRideGoalOptions();
@@ -472,6 +525,31 @@ export class InfinibikeApp {
       });
   }
 
+  private renderBiomeControls(): void {
+    const container = this.root.querySelector("#biome-controls");
+    if (!container) return;
+    const ids = biomesFor(this.environment.landscape);
+    container.innerHTML = ids
+      .map(
+        (id) =>
+          `<label class="biome-row"><span>${BIOME_CATALOG[id].name}<small data-biome-share="${id}"></small></span><select data-biome="${id}" aria-label="${BIOME_CATALOG[id].name} frequency" ${ids.length === 1 ? "disabled" : ""}>${(Object.keys(FREQUENCY_WEIGHTS) as BiomeFrequency[]).map((frequency) => option(frequency, frequency[0]!.toUpperCase() + frequency.slice(1), this.environment.biomeFrequencies[this.environment.landscape][id] ?? "normal")).join("")}</select></label>`,
+      )
+      .join("");
+    this.root.querySelector("#biome-message")!.textContent =
+      ids.length === 1
+        ? "Dreamwood is the only Dreamscape biome for now, so its share is 100%."
+        : "";
+    this.updateBiomeShares();
+  }
+
+  private updateBiomeShares(): void {
+    for (const { id, share } of biomeShares(this.environment)) {
+      const output = this.root.querySelector(`[data-biome-share="${id}"]`);
+      if (output)
+        output.textContent = `${Math.round(share * 100)}% estimated share`;
+    }
+  }
+
   private readEnvironment(): void {
     const get = (id: string): string =>
       (
@@ -479,6 +557,7 @@ export class InfinibikeApp {
           ?.value ?? ""
       ).trim();
     this.environment = {
+      ...this.environment,
       seed: get("seed") || "open-road",
       landscape: get("landscape") as Landscape,
       terrain: get("terrain") as TerrainProfile,
@@ -957,7 +1036,7 @@ export class InfinibikeApp {
             <div><span>Elevation</span><strong>${Math.round(summary.elevationGainM)} m</strong></div>
           </div>
           <div class="seed-summary"><span>World seed</span><strong>${escapeHtml(summary.environment.seed)}</strong></div>
-          <div class="seed-summary"><span>Landscape</span><strong>${summary.environment.landscape === "city" ? "City" : "Countryside"}</strong></div>
+          <div class="seed-summary"><span>Landscape</span><strong>${LANDSCAPE_LABELS[summary.environment.landscape]}</strong></div>
           <div class="seed-summary"><span>Ride goal</span><strong>${goalLabel(summary.rideMode)}</strong></div>
           <section class="ride-analysis" aria-labelledby="analysis-title">
             <header><h2 id="analysis-title">Ride analysis</h2><span>${summary.ftpW} W FTP</span></header>
@@ -996,7 +1075,7 @@ export class InfinibikeApp {
           this.cameraSettings.reducedMotion,
         ),
       );
-    this.environment = { ...summary.environment };
+    this.environment = normalizeEnvironment(summary.environment);
     this.rideMode = { ...summary.rideMode };
     this.ridePhysics = { ...this.ridePhysics, ftpW: summary.ftpW };
     this.persistPreferences();

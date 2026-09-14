@@ -1,3 +1,4 @@
+import { BIOME_CATALOG, biomeBlendAt } from "../domain/biomes";
 import * as THREE from "three";
 import { hashString } from "../domain/random";
 import { forkPath } from "./route-geometry";
@@ -60,7 +61,7 @@ export class TerrainSurface {
       this.routePoints.push(road);
       this.mainRoadSamples.set(distance, road);
     }
-    if (this.generator.settings.landscape === "countryside") {
+    if (this.generator.settings.landscape !== "city") {
       for (
         let index = Math.max(
           0,
@@ -245,6 +246,22 @@ export class TerrainSurface {
                   .lerp(new THREE.Color(0x365c49), region.woodland * 0.65)
                   .lerp(new THREE.Color(0x65747b), region.highland * 0.55)
                   .lerp(new THREE.Color(0x87a26a), region.meadow * 0.2);
+          if (this.generator.settings.biomeGenerationVersion === 2) {
+            const tint = new THREE.Color(0);
+            for (const entry of biomeBlendAt(
+              this.generator.settings,
+              road.distanceM,
+            ))
+              tint.add(
+                new THREE.Color(BIOME_CATALOG[entry.id].color).multiplyScalar(
+                  entry.weight,
+                ),
+              );
+            color.lerp(
+              tint,
+              this.generator.settings.landscape === "city" ? 0.2 : 0.75,
+            );
+          }
           color.offsetHSL(0, 0, Math.sin(x * 0.018 + z * 0.009) * 0.012);
           if (this.generator.settings.landscape === "countryside") {
             const field = Math.floor(road.distanceM / 200);

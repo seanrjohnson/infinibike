@@ -977,3 +977,37 @@ select:focus {
 .compact-hud .hud > div {
   min-width: 5rem;
 }
+
+.biome-settings {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(170, 194, 169, 0.3);
+  border-radius: 12px;
+  padding: 14px;
+}
+.biome-settings summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.biome-settings p {
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+#biome-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.biome-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.biome-row small {
+  display: block;
+  font-weight: 400;
+  opacity: 0.75;
+  margin-top: 3px;
+}
+.biome-row select {
+  width: 100%;
+}

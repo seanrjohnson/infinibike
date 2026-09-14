@@ -3,7 +3,7 @@ import type { TerrainSurface } from "./terrain-surface";
 import type { OrientedFootprint } from "./world-generator";
 
 export type PlacementPolicy =
-  "upright" | "conform" | "embedded" | "road-span" | "water-edge";
+  "upright" | "conform" | "embedded" | "road-span" | "water-edge" | "monument";
 export function footprintPoints(
   footprint: OrientedFootprint,
 ): { x: number; z: number }[] {
@@ -65,10 +65,11 @@ export function supportPlacement(
   const high = Math.max(...supports.map((s) => s.height));
   const normal = surface.sample(footprint.x, footprint.z, distanceM).normal;
   if (policy === "upright" && high - low > 2.5) return;
+  if (policy === "monument" && high - low > 12) return;
   if (normal.y < (policy === "embedded" ? 0.75 : 0.9)) return;
   return {
     baseY:
-      policy === "upright"
+      policy === "upright" || policy === "monument"
         ? high + 0.03
         : policy === "embedded"
           ? low - 0.12

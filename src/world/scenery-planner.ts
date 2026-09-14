@@ -1,3 +1,9 @@
+import { monumentAt, planMonument } from "./monument-generator";
+import {
+  planArchitecture,
+  type ArchitecturePlan,
+} from "./architecture-generator";
+import { BIOME_CATALOG, biomeAt, type BiomeId } from "../domain/biomes";
 import { hashString } from "../domain/random";
 import type { AssetKey } from "./asset-library";
 import { ASSET_DIMENSIONS } from "./asset-metadata";
@@ -11,7 +17,7 @@ import {
 import {
   BIOMES,
   DISTRICTS,
-  districtAt,
+  environmentDistrictAt,
   regionForObject,
   sceneryRandom,
 } from "./scenery-providers";
@@ -28,6 +34,8 @@ import {
 } from "./world-generator";
 
 export type SceneryDescriptor = {
+  biome?: BiomeId;
+  architecture?: ArchitecturePlan;
   id: string;
   owner: number;
   distanceM: number;
@@ -72,12 +80,32 @@ export class SceneryPlanner {
       const distant = city ? lane >= 2 : lane >= 4;
       const id = `${category}:${chunkIndex}:${distance}:${side}:${lane}${distant ? ":distant" : ""}`;
       const random = sceneryRandom(settings.seed, category, id);
-      if (random() > density) return;
+      const admitted = random() <= density;
       const road = this.generator.sample(distance);
-      const district = districtAt(settings.seed, distance, id);
-      const provider = BIOMES[regionForObject(road.region, random())];
+      const district = environmentDistrictAt(settings, distance, id);
+      const biome =
+        settings.biomeGenerationVersion === 2
+          ? biomeAt(settings, distance, id)
+          : undefined;
+      const monument =
+        biome && category === "building"
+          ? monumentAt(settings.seed, distance, side, lane, biome)
+          : undefined;
+      if (!admitted && !monument) return;
+      const provider =
+        BIOMES[
+          biome
+            ? BIOME_CATALOG[biome].region
+            : regionForObject(road.region, random())
+        ];
       const profile = DISTRICTS[district];
-      if (city && category === "building" && random() > profile.spacing) return;
+      if (
+        city &&
+        category === "building" &&
+        random() > profile.spacing &&
+        !monument
+      )
+        return;
       const list =
         category === "tree"
           ? provider.trees
@@ -91,10 +119,18 @@ export class SceneryPlanner {
                   "bike_rack",
                 ] as const)
               : provider.props;
-      const asset =
+      let asset =
         city && category === "building"
           ? selectBuildingAsset(district, random())
           : list[Math.floor(random() * list.length)]!;
+      if (biome === "wildlife-meadows" && category === "prop")
+        asset = "flower_patch";
+      if (
+        (biome === "ancient-way" || biome === "dreamwood") &&
+        category === "prop"
+      )
+        asset = "rock_cluster";
+      if (biome === "ancient-way" && category === "tree") asset = "tree_pine";
       let width =
         category === "building"
           ? city
@@ -149,17 +185,55 @@ export class SceneryPlanner {
         width = Math.max(width + 1, 4);
         depth = Math.max(depth + 1, 4);
       }
+      let architecture: ArchitecturePlan | undefined;
+      if (biome && category === "building") {
+        let planned = planArchitecture(
+          settings.seed,
+          biome,
+          distance,
+          side,
+          lane,
+        );
+        if (monument) planned = planMonument(planned, monument);
+        const themed = [
+          "arcaded-city",
+          "brutalist-gardens",
+          "ancient-way",
+          "dreamwood",
+        ].includes(biome);
+        if (
+          themed ||
+          planned.landmark ||
+          hashString(settings.seed + ":procedural-building:" + id) % 100 < 55
+        ) {
+          architecture = planned;
+          width = planned.width;
+          depth = planned.depth;
+          height = planned.height;
+        }
+      }
+      if (biome === "dreamwood" && category === "tree") {
+        width = 8;
+        depth = 8;
+        height = 11 + random() * 7;
+      }
       const offset =
         side *
-        (city
-          ? category === "tree"
-            ? 8.5 + lane * 14
-            : 11 + depth / 2 + lane * 35
-          : category === "building"
-            ? 48 + lane * 28
-            : (category === "tree" ? 26 : 12) + lane * 22 + random() * 10);
+        (architecture?.monumental
+          ? (city ? 68 : 24) + depth / 2
+          : city
+            ? category === "tree"
+              ? 8.5 + lane * 14
+              : 11 + depth / 2 + lane * 35
+            : category === "building"
+              ? biome === "ancient-way"
+                ? 30 + lane * 18
+                : 48 + lane * 28
+              : (category === "tree" ? 26 : 12) + lane * 22 + random() * 10);
       const heading = road.heading;
       result.push({
+        architecture,
+        biome,
         id,
         owner: chunkIndex,
         distanceM: distance,
@@ -178,11 +252,13 @@ export class SceneryPlanner {
           halfAcross: (category === "building" ? depth : width) / 2,
           halfAlong: (category === "building" ? width : depth) / 2,
         },
-        priority:
-          hashString(`${settings.seed}:${id}:priority`) +
-          (category === "building" ? 0 : 4_294_967_296),
-        policy:
-          category === "building"
+        priority: architecture?.monumental
+          ? -1
+          : hashString(`${settings.seed}:${id}:priority`) +
+            (category === "building" ? 0 : 4_294_967_296),
+        policy: architecture?.monumental
+          ? "monument"
+          : category === "building"
             ? "upright"
             : category === "tree" || asset === "rock_cluster"
               ? "embedded"
@@ -205,7 +281,10 @@ export class SceneryPlanner {
           add(start + 25 + step * 50, side, 0, "tree");
       for (let step = 0; step < 5; step++) {
         const distance = start + 25 + step * 50;
-        if (districtAt(settings.seed, distance, `park:${distance}`) !== "park")
+        if (
+          environmentDistrictAt(settings, distance, `park:${distance}`) !==
+          "park"
+        )
           continue;
         for (const side of [-1, 1])
           for (const lane of [1, 2]) add(distance, side, lane, "tree");
@@ -273,8 +352,62 @@ export class SceneryPlanner {
     for (let i = Math.max(0, index - 4); i <= index + 4; i++)
       neighbors.push(...this.raw(i));
     const streets = this.exclusions(index);
+    const city = this.generator.settings.landscape === "city";
+    const parallelStreets: PlanarStreetSegment[] = [];
+    if (city) {
+      for (
+        let distance = Math.max(0, index * CHUNK_LENGTH_M - 150);
+        distance < (index + 1) * CHUNK_LENGTH_M + 150;
+        distance += 8
+      ) {
+        const a = this.generator.sample(distance),
+          b = this.generator.sample(distance + 8);
+        for (const side of [-1, 1])
+          parallelStreets.push({
+            start: {
+              x: a.x + Math.cos(a.heading) * side * 56,
+              z: a.z + Math.sin(a.heading) * side * 56,
+            },
+            end: {
+              x: b.x + Math.cos(b.heading) * side * 56,
+              z: b.z + Math.sin(b.heading) * side * 56,
+            },
+          });
+      }
+    }
     const result: PlacedScenery[] = [];
     for (const candidate of this.raw(index)) {
+      if (
+        city &&
+        !candidate.architecture?.monumental &&
+        candidate.category === "building" &&
+        neighbors.some((other) => {
+          if (!other.architecture?.monumental) return false;
+          const dx = candidate.footprint.x - other.footprint.x,
+            dz = candidate.footprint.z - other.footprint.z;
+          const h = other.footprint.heading;
+          const towardRoad =
+            -(dx * Math.cos(h) + dz * Math.sin(h)) *
+            Number(other.id.split(":")[3]);
+          const along = dx * Math.sin(h) - dz * Math.cos(h);
+          return (
+            towardRoad > 0 &&
+            towardRoad < other.footprint.halfAcross + 60 &&
+            // Widen toward the riding corridor so approach views stay open.
+            Math.abs(along) < other.footprint.halfAlong + towardRoad * 1.6
+          );
+        })
+      )
+        continue;
+      if (
+        candidate.architecture?.monumental &&
+        footprintIntersectsStreetSegments(
+          candidate.footprint,
+          parallelStreets,
+          8.2,
+        )
+      )
+        continue;
       if (
         footprintIntersectsStreetSegments(
           candidate.footprint,
@@ -304,6 +437,15 @@ export class SceneryPlanner {
         candidate.distanceM,
         candidate.policy,
       );
+      if (
+        support &&
+        (candidate.architecture?.form === "windmill-complex" ||
+          candidate.architecture?.form === "cliffside-monastery" ||
+          candidate.architecture?.form === "ruined-hilltop-castle") &&
+        support.baseY <
+          this.generator.sample(candidate.distanceM).elevationM + 1
+      )
+        continue;
       if (support) result.push({ ...candidate, support });
     }
     this.plans.set(index, result);

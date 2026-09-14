@@ -52,9 +52,11 @@ test("completes a demo ride and stores its summary", async ({ page }) => {
   await expect(page.locator("#demo-power-value")).toHaveText("180 W");
   await expect(page.locator("#hud-power")).toHaveText("180");
   await expect(
-    page.getByRole("button", { name: "Change camera" }),
+    page.getByRole("button", { name: "Change camera", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Change camera" }).click();
+  await page
+    .getByRole("button", { name: "Change camera", exact: true })
+    .click();
   await expect(page.getByText("Wide chase camera")).toBeVisible();
   await expect
     .poll(
