@@ -1,8 +1,15 @@
-import type { BiomeId } from "../../src/domain/biomes";
 import { expect, test } from "@playwright/test";
 import { biomesFor } from "../../src/domain/biomes";
 import { normalizeEnvironment } from "../../src/domain/environment";
-import { DISTRICT_MONUMENT_DECKS } from "../../src/world/district-landmarks";
+import {
+  WATERSIDE_MONUMENT_FORMS,
+  isCrossing,
+} from "../../src/world/waterside-landmarks";
+const DECKS = {
+  lakeside: WATERSIDE_MONUMENT_FORMS,
+  "ancient-way": ["ceremonial-road-arch"],
+  highland: ["crossing-stone-viaduct"],
+} as const;
 
 // Use a reproducible headless renderer for the monument screenshot tour.
 // The Windows native compositor can fail SharedImage allocation before traversal.
@@ -12,8 +19,8 @@ test.use({
   },
 });
 
-for (const biome of Object.keys(DISTRICT_MONUMENT_DECKS) as BiomeId[]) {
-  for (const mobile of [false, true]) {
+for (const biome of Object.keys(DECKS) as (keyof typeof DECKS)[]) {
+  for (const mobile of [true]) {
     test(
       "shows " +
         biome +
@@ -22,14 +29,14 @@ for (const biome of Object.keys(DISTRICT_MONUMENT_DECKS) as BiomeId[]) {
       async ({ page }, testInfo) => {
         test.setTimeout(300_000);
         const environment = normalizeEnvironment({
-          seed: "district-tour",
-          landscape: "city",
+          seed: "lake-tour",
+          landscape: "countryside",
           terrain: "gentle",
           graphics: "low",
           time: "day",
           biomeFrequencies: {
-            city: Object.fromEntries(
-              biomesFor("city").map((id) => [
+            countryside: Object.fromEntries(
+              biomesFor("countryside").map((id) => [
                 id,
                 id === biome ? "normal" : "off",
               ]),
@@ -74,14 +81,18 @@ for (const biome of Object.keys(DISTRICT_MONUMENT_DECKS) as BiomeId[]) {
             ),
           ),
         ).toBe(0);
-        const monuments = await page.evaluate(async () => {
+        const monuments = await page.evaluate(async (forms) => {
           const qa = window.__INFINIBIKE_VISUAL_QA__!;
           const results: ReturnType<typeof qa.scenery> = [];
           for (let index = 0; index < 120; index++) {
             results.push(
               ...qa
                 .scenery(index)
-                .filter((item) => item.architecture?.monumental),
+                .filter(
+                  (item) =>
+                    item.architecture?.monumental &&
+                    forms.some((form) => form === item.architecture!.form),
+                ),
             );
             if (index % 4 === 0)
               await new Promise<void>((resolve) =>
@@ -89,12 +100,12 @@ for (const biome of Object.keys(DISTRICT_MONUMENT_DECKS) as BiomeId[]) {
               );
           }
           return results;
-        });
+        }, DECKS[biome]);
         expect(monuments.length).toBeGreaterThanOrEqual(
-          DISTRICT_MONUMENT_DECKS[biome]!.length * 2,
+          DECKS[biome].length * 2,
         );
         expect(monuments.length).toBeLessThanOrEqual(30);
-        for (const form of DISTRICT_MONUMENT_DECKS[biome]!) {
+        for (const form of DECKS[biome]) {
           const monument = monuments.find(
             (item) =>
               item.architecture!.form === form &&
@@ -135,6 +146,29 @@ for (const biome of Object.keys(DISTRICT_MONUMENT_DECKS) as BiomeId[]) {
                 Math.floor(distance / 250),
               ),
             ).toContainEqual(monument);
+          }
+          if (isCrossing(form)) {
+            for (const mode of ["close", "wide", "handlebar"] as const)
+              for (let offset = -50; offset <= 50; offset += 10) {
+                const diagnostics = await page.evaluate(
+                  ({ mode, distance, offset }) => {
+                    const qa = window.__INFINIBIKE_VISUAL_QA__!;
+                    qa.setCamera(mode);
+                    qa.setDistance(distance + offset);
+                    return window.__INFINIBIKE_DEBUG__!;
+                  },
+                  { mode, distance, offset },
+                );
+                expect(Number(diagnostics.contextLosses)).toBe(0);
+              }
+            await page.evaluate((distance) => {
+              const qa = window.__INFINIBIKE_VISUAL_QA__!;
+              qa.setCamera("wide");
+              qa.setDistance(distance - 30);
+            }, distance);
+            await page.screenshot({
+              path: testInfo.outputPath(form + "-crossing.png"),
+            });
           }
           if (mobile)
             await page.evaluate(

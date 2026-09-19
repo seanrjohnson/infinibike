@@ -75,7 +75,12 @@ for (const mobile of [false, true]) {
           results.push(
             ...qa
               .scenery(index)
-              .filter((item) => item.architecture?.monumental),
+              .filter(
+                (item) =>
+                  item.architecture?.monumental &&
+                  item.architecture.form !== "ceremonial-road-arch" &&
+                  item.architecture.form !== "crossing-stone-viaduct",
+              ),
           );
           if (index % 4 === 0)
             await new Promise<void>((resolve) =>

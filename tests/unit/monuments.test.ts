@@ -126,7 +126,11 @@ describe("monumental architecture", () => {
         planner.plan(index),
       )
         .flat()
-        .filter((item) => item.architecture?.monumental);
+        .filter(
+          (item) =>
+            item.architecture?.monumental &&
+            MONUMENT_FORMS.some((form) => form === item.architecture!.form),
+        );
       expect(buildings.length).toBeGreaterThanOrEqual(12);
       expect(buildings.length).toBeLessThanOrEqual(30);
       expect(new Set(buildings.map((item) => item.architecture!.form))).toEqual(

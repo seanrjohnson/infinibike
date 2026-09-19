@@ -1,4 +1,9 @@
 import {
+  FINAL_MONUMENT_FORMS,
+  WATERSIDE_MONUMENT_FORMS,
+  watersideLandmarkParts,
+} from "./waterside-landmarks";
+import {
   DISTRICT_MONUMENT_FORMS,
   DISTRICT_MONUMENT_DECKS,
   districtLandmarkParts,
@@ -39,6 +44,7 @@ export const MONUMENT_FORMS = [
   "pyramid-complex",
 ] as const;
 export type MonumentForm =
+  | (typeof FINAL_MONUMENT_FORMS)[number]
   | (typeof DISTRICT_MONUMENT_FORMS)[number]
   | (typeof DREAMWOOD_MONUMENT_FORMS)[number]
   | (typeof BRUTALIST_MONUMENT_FORMS)[number]
@@ -84,6 +90,7 @@ export function monumentAt(
       return deck[(section % 2) * 2 + 1];
     return;
   }
+  const waterside = biome === "lakeside";
   const districtDeck = DISTRICT_MONUMENT_DECKS[biome];
   const highland = biome === "woodland" || biome === "highland";
   const arcaded = biome === "arcaded-city";
@@ -95,7 +102,8 @@ export function monumentAt(
     !arcaded &&
     !brutalist &&
     !dreamwood &&
-    !districtDeck
+    !districtDeck &&
+    !waterside
   )
     return;
   const section = Math.floor(distance / 1000);
@@ -103,34 +111,45 @@ export function monumentAt(
   if (
     distance % 1000 !==
       (arcaded || brutalist || districtDeck ? 112.5 : 125) + (hash % 4) * 250 ||
-    side !== ((hash >>> 2) % 2 ? 1 : -1)
+    side !==
+      (waterside
+        ? hashString(`${normalized}:water-side`) % 2
+          ? 1
+          : -1
+        : (hash >>> 2) % 2
+          ? 1
+          : -1)
   )
     return;
-  const deck: MonumentForm[] = districtDeck
-    ? [...districtDeck]
-    : dreamwood
-      ? [...DREAMWOOD_MONUMENT_FORMS]
-      : brutalist
-        ? [...BRUTALIST_MONUMENT_FORMS]
-        : arcaded
-          ? [...ARCADED_MONUMENT_FORMS]
-          : highland
-            ? [...HIGHLAND_MONUMENT_FORMS]
-            : [...MONUMENT_FORMS];
+  const deck: MonumentForm[] = waterside
+    ? [...WATERSIDE_MONUMENT_FORMS]
+    : districtDeck
+      ? [...districtDeck]
+      : dreamwood
+        ? [...DREAMWOOD_MONUMENT_FORMS]
+        : brutalist
+          ? [...BRUTALIST_MONUMENT_FORMS]
+          : arcaded
+            ? [...ARCADED_MONUMENT_FORMS]
+            : highland
+              ? [...HIGHLAND_MONUMENT_FORMS]
+              : [...MONUMENT_FORMS];
   const random = seededRandom(
     hashString(
       normalized +
-        (districtDeck
-          ? ":district-monument-deck:" + biome + ":"
-          : dreamwood
-            ? ":dreamwood-monument-deck:"
-            : brutalist
-              ? ":brutalist-monument-deck:"
-              : arcaded
-                ? ":arcaded-monument-deck:"
-                : highland
-                  ? ":highland-monument-deck:"
-                  : ":monument-deck:") +
+        (waterside
+          ? ":waterside-monument-deck:"
+          : districtDeck
+            ? ":district-monument-deck:" + biome + ":"
+            : dreamwood
+              ? ":dreamwood-monument-deck:"
+              : brutalist
+                ? ":brutalist-monument-deck:"
+                : arcaded
+                  ? ":arcaded-monument-deck:"
+                  : highland
+                    ? ":highland-monument-deck:"
+                    : ":monument-deck:") +
         Math.floor(section / deck.length),
     ),
   );
@@ -147,6 +166,12 @@ export function planMonument(
 ): ArchitecturePlan {
   const scale = 0.9 + base.asymmetry * 0.2;
   const dimensions: Record<MonumentForm, [number, number, number]> = {
+    "island-abbey": [64, 56, 38],
+    "lighthouse-complex": [58, 34, 42],
+    "waterfront-palace": [78, 34, 36],
+    "wooden-boathouse": [64, 42, 26],
+    "ceremonial-road-arch": [56, 16, 32],
+    "crossing-stone-viaduct": [72, 20, 34],
     "clock-tower-station": [82, 66, 48],
     "exhibition-hall": [92, 76, 48],
     "suspension-bridge": [112, 42, 52],
@@ -204,6 +229,8 @@ export function planMonument(
 }
 
 export function monumentParts(plan: ArchitecturePlan): ArchitecturePart[] {
+  if (FINAL_MONUMENT_FORMS.some((form) => form === plan.form))
+    return watersideLandmarkParts(plan);
   if (DISTRICT_MONUMENT_FORMS.some((form) => form === plan.form))
     return districtLandmarkParts(plan);
   if (DREAMWOOD_MONUMENT_FORMS.some((form) => form === plan.form))

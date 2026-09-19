@@ -221,7 +221,8 @@ export class BiomeScenery {
               : plan.form === "historic-farmstead"
                 ? FARMSTEAD_PALETTES[plan.palette % FARMSTEAD_PALETTES.length]!
                 : plan.form === "windmill-complex" ||
-                    plan.form === "monumental-dovecote"
+                    plan.form === "monumental-dovecote" ||
+                    plan.form === "wooden-boathouse"
                   ? MEADOW_LANDMARK_PALETTES[
                       plan.palette % MEADOW_LANDMARK_PALETTES.length
                     ]!
@@ -237,8 +238,12 @@ export class BiomeScenery {
         const mesh = this.part(
           group,
           part.shape,
-          [part.size[0] * w, part.size[1] * h, part.size[2] * d],
-          [part.at[0] * w, part.at[1] * h, part.at[2] * d],
+          [
+            part.size[0] * plan.width,
+            part.size[1] * h,
+            part.size[2] * plan.depth,
+          ],
+          [part.at[0] * plan.width, part.at[1] * h, part.at[2] * plan.depth],
           palette[material],
           part.material === "glow",
         );

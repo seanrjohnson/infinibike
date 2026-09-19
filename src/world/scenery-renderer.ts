@@ -1,3 +1,5 @@
+import { FINAL_MONUMENT_FORMS, landmarkFootings } from "./waterside-landmarks";
+import { landmarkPoint } from "./landmark-support";
 import { isMeadowMotion } from "./meadow-monument-motion";
 import {
   OBSERVATORY_FOOTINGS,
@@ -239,7 +241,88 @@ export function renderScenery(
         descriptor.asset === "rock_cluster" ? 0x7c8178 : 0x879064,
       );
     }
-    if (descriptor.architecture?.form === "wildlife-observatory") {
+    if (
+      descriptor.architecture &&
+      FINAL_MONUMENT_FORMS.some(
+        (form) => form === descriptor.architecture!.form,
+      )
+    ) {
+      const plan = descriptor.architecture;
+      for (const f of landmarkFootings(plan)) {
+        const x = f.x * plan.width,
+          z = f.z * plan.depth;
+        const p = landmarkPoint(
+          footprint.x,
+          footprint.z,
+          descriptor.rotationY,
+          x,
+          z,
+        );
+        const ground =
+          context.surface.sample(p.x, p.z, descriptor.distanceM).height -
+          support.baseY;
+        const bottom = Math.min(ground - 0.2, support.bottomY - support.baseY),
+          top = 0;
+        if (plan.form === "island-abbey" && f.x === 0 && f.z === 0) {
+          const island = new THREE.Mesh(
+            geometry(
+              "island-rock-base",
+              () => new THREE.CylinderGeometry(0.46, 0.5, 1, 12),
+            ),
+            material(0x85867d),
+          );
+          island.scale.set(plan.width * 0.88, top - bottom, plan.depth * 0.82);
+          island.position.set(0, (top + bottom) / 2, 0);
+          group.add(island);
+        } else
+          addBox(
+            group,
+            [f.width * plan.width, top - bottom, f.depth * plan.depth],
+            [x, (top + bottom) / 2, z],
+            plan.form === "wooden-boathouse" ? 0x6f5840 : 0x85867d,
+          );
+      }
+      if (plan.form === "wooden-boathouse")
+        for (const bx of [-0.255, 0, 0.255]) {
+          const x = bx * plan.width * plan.mirror,
+            z = 0.08 * plan.depth;
+          const p = landmarkPoint(
+            footprint.x,
+            footprint.z,
+            descriptor.rotationY,
+            x,
+            z,
+          );
+          const water = context.surface.waterHeight(
+            p.x,
+            p.z,
+            descriptor.distanceM,
+          );
+          if (water !== undefined) {
+            const y = water - support.baseY + 0.12;
+            // Low-sided moored skiffs follow the actual local water triangle.
+            addBox(
+              group,
+              [plan.width * 0.12, 0.24, plan.depth * 0.22],
+              [x, y, z],
+              0x624b37,
+            );
+            addBox(
+              group,
+              [plan.width * 0.1, 0.08, plan.depth * 0.18],
+              [x, y + 0.16, z],
+              0xc6ac79,
+            );
+            for (const side of [-1, 1])
+              addBox(
+                group,
+                [0.14, 0.35, plan.depth * 0.22],
+                [x + side * plan.width * 0.06, y + 0.15, z],
+                0x71513a,
+              );
+          }
+        }
+    } else if (descriptor.architecture?.form === "wildlife-observatory") {
       const plan = descriptor.architecture;
       const palette =
         OBSERVATORY_PALETTES[plan.palette % OBSERVATORY_PALETTES.length]!;

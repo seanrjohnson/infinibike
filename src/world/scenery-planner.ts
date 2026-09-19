@@ -1,3 +1,6 @@
+import { isWaterside, isCrossing } from "./waterside-landmarks";
+import { shoreOffset, specialLandmarkSupport } from "./landmark-support";
+import type { MonumentForm } from "./monument-generator";
 import { monumentAt, planMonument } from "./monument-generator";
 import {
   planArchitecture,
@@ -76,6 +79,7 @@ export class SceneryPlanner {
       side: number,
       lane: number,
       category: SceneryDescriptor["category"],
+      forcedMonument?: MonumentForm,
     ) => {
       const distant = city ? lane >= 2 : lane >= 4;
       const id = `${category}:${chunkIndex}:${distance}:${side}:${lane}${distant ? ":distant" : ""}`;
@@ -88,9 +92,10 @@ export class SceneryPlanner {
           ? biomeAt(settings, distance, id)
           : undefined;
       const monument =
-        biome && category === "building"
+        forcedMonument ??
+        (biome && category === "building"
           ? monumentAt(settings.seed, distance, side, lane, biome)
-          : undefined;
+          : undefined);
       if (!admitted && !monument) return;
       const provider =
         BIOMES[
@@ -217,7 +222,7 @@ export class SceneryPlanner {
         depth = 8;
         height = 11 + random() * 7;
       }
-      const offset =
+      let offset =
         side *
         (architecture?.monumental
           ? (city ? 68 : 24) + depth / 2
@@ -230,6 +235,13 @@ export class SceneryPlanner {
                 ? 30 + lane * 18
                 : 48 + lane * 28
               : (category === "tree" ? 26 : 12) + lane * 22 + random() * 10);
+      if (architecture && isWaterside(architecture.form)) {
+        const shore = shoreOffset(this.surface, distance, side, architecture);
+        if (shore === undefined) return;
+        offset = shore;
+      }
+      const crossing = Boolean(architecture && isCrossing(architecture.form));
+      if (crossing) offset = 0;
       const heading = road.heading;
       result.push({
         architecture,
@@ -249,22 +261,31 @@ export class SceneryPlanner {
           x: road.x + Math.cos(heading) * offset,
           z: road.z + Math.sin(heading) * offset,
           heading,
-          halfAcross: (category === "building" ? depth : width) / 2,
-          halfAlong: (category === "building" ? width : depth) / 2,
+          halfAcross:
+            (crossing ? width : category === "building" ? depth : width) / 2,
+          halfAlong:
+            (crossing ? depth : category === "building" ? width : depth) / 2,
         },
         priority: architecture?.monumental
           ? -1
           : hashString(`${settings.seed}:${id}:priority`) +
             (category === "building" ? 0 : 4_294_967_296),
-        policy: architecture?.monumental
-          ? "monument"
+        policy: crossing
+          ? "road-span"
+          : architecture && isWaterside(architecture.form)
+            ? "water-edge"
+            : architecture?.monumental
+              ? "monument"
+              : category === "building"
+                ? "upright"
+                : category === "tree" || asset === "rock_cluster"
+                  ? "embedded"
+                  : "conform",
+        rotationY: crossing
+          ? -heading
           : category === "building"
-            ? "upright"
-            : category === "tree" || asset === "rock_cluster"
-              ? "embedded"
-              : "conform",
-        rotationY:
-          category === "building" ? -heading + (side * Math.PI) / 2 : -heading,
+            ? -heading + (side * Math.PI) / 2
+            : -heading,
       });
     };
     const start = chunkIndex * CHUNK_LENGTH_M;
@@ -300,6 +321,27 @@ export class SceneryPlanner {
       for (const side of [-1, 1]) {
         add(start + 125, side, 0, "building");
         add(start + 75, side, 4, "building");
+      }
+    }
+    if (
+      !city &&
+      settings.landscape === "countryside" &&
+      settings.biomeGenerationVersion === 2
+    ) {
+      const block = Math.floor(chunkIndex / 16);
+      if (
+        chunkIndex % 16 ===
+        hashString(settings.seed + ":crossing-site:" + block) % 16
+      ) {
+        const distance = start + 175,
+          biome = biomeAt(settings, distance, "crossing");
+        const form =
+          biome === "ancient-way"
+            ? "ceremonial-road-arch"
+            : biome === "woodland" || biome === "highland"
+              ? "crossing-stone-viaduct"
+              : undefined;
+        if (form) add(distance, 1, 0, "building", form);
       }
     }
     this.candidates.set(chunkIndex, result);
@@ -431,12 +473,25 @@ export class SceneryPlanner {
       const landmark = this.generator.landmarkAtChunk(index);
       if (landmark && Math.abs(candidate.distanceM - landmark.distanceM) < 28)
         continue;
-      const support = supportPlacement(
-        this.surface,
-        candidate.footprint,
-        candidate.distanceM,
-        candidate.policy,
-      );
+      const special =
+        candidate.architecture &&
+        (isWaterside(candidate.architecture.form) ||
+          isCrossing(candidate.architecture.form));
+      const support = special
+        ? specialLandmarkSupport(
+            this.surface,
+            candidate.architecture!,
+            candidate.footprint.x,
+            candidate.footprint.z,
+            candidate.rotationY,
+            candidate.distanceM,
+          )
+        : supportPlacement(
+            this.surface,
+            candidate.footprint,
+            candidate.distanceM,
+            candidate.policy,
+          );
       if (
         support &&
         (candidate.architecture?.form === "windmill-complex" ||

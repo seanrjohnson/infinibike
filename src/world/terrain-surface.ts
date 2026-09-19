@@ -339,6 +339,25 @@ export class TerrainSurface {
     };
   }
 
+  /** Height of the exact clipped water triangle used by the renderer. */
+  waterHeight(x: number, z: number, hint = 0): number | undefined {
+    if (this.sample(x, z, hint).kind !== "water") return;
+    const step = TERRAIN_STEP_M,
+      x0 = Math.floor(x / step) * step,
+      z0 = Math.floor(z / step) * step;
+    const u = (x - x0) / step,
+      v = (z - z0) / step;
+    const a = this.waterVertex(x0, z0).y,
+      b = this.waterVertex(x0 + step, z0).y,
+      c = this.waterVertex(x0, z0 + step).y,
+      d = this.waterVertex(x0 + step, z0 + step).y;
+    return (
+      (u + v <= 1
+        ? a + u * (b - a) + v * (c - a)
+        : d + (1 - u) * (c - d) + (1 - v) * (b - d)) + 0.015
+    );
+  }
+
   buildWater(chunk: WorldChunkDescriptor): THREE.Mesh | undefined {
     const positions: number[] = [];
     type WetVertex = ReturnType<TerrainSurface["waterVertex"]>;
