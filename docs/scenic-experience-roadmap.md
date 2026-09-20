@@ -56,9 +56,8 @@ Connect scenery with stone walls, farm gates, irrigation channels, fallen column
 
 Prototype floating stones assembling above a clearing, luminous mushroom spores, and a distant spectral deer on a ridge. Use rare seeded opportunities, bounded lifetimes, pooled resources, and restrained light. Keep essential riding visibility and weather compatibility. Eventes can go beyond surreal. For example the already existing airplane and helicopter flyover events can be considered events in the same category as these new ones.
 
-## 6. Discovery journal (deferred)
-
-Record encountered landmarks, deterministic procedural names, and optional snapshots. Show discoveries in ride summaries and offer the existing route replay. Define encounter distance, duplicate handling, storage limits, deletion, and schema migration before implementation. Keep the riding screen unobtrusive. This can also work as a kind of "achievement" system, to encourage users to explore new landscapes. At the main menu, there will be a "discoveries" option, giving the name and biome for various discoverable landmarks, surreal events, animals and scenery. When a user encounters one of them in game, the item is checked off in the journal and a screenshot is added to the journal.
+## 6. Discovery journal
+Record encountered landmarks and events, deterministic procedural names, and optional snapshots. Show discoveries in ride summaries and offer the existing route replay. Define encounter distance, duplicate handling, storage limits, deletion, and schema migration before implementation. Keep the riding screen unobtrusive. This can also work as a kind of "achievement" system, to encourage users to explore new landscapes and continue exploring landscapes until all of the landmarks and events have been encountered. At the main menu, there will be a "discoveries" option, giving the name and biome for various discoverable landmarks, events, wildlife and scenery. When a user encounters one of them in game, the item is checked off in the journal and a screenshot is added to the journal.
 
 ## 7. Scenic sequences on long rides (deferred)
 
