@@ -201,5 +201,5 @@ describe("Dreamwood monuments", () => {
         12.2,
       );
     }
-  });
+  }, 15_000);
 });

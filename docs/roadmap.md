@@ -2,6 +2,8 @@
 
 This checklist tracks the next feature work in recommended implementation order.
 
+The next scenery work is tracked in the [Scenic experience roadmap](scenic-experience-roadmap.md), beginning with landmark approaches and architectural neighborhoods.
+
 ## World Variety
 
 - [x] **Alternative landscapes**

@@ -200,6 +200,120 @@ export class BiomeScenery {
       (building
         ? descriptor.footprint.halfAcross
         : descriptor.footprint.halfAlong);
+    if (
+      descriptor.approachFeature === "path" ||
+      descriptor.approachFeature === "terrace"
+    ) {
+      const foundation = descriptor.support.baseY - descriptor.support.bottomY;
+      const slabHeight =
+        descriptor.approachFeature === "terrace" ? h - 0.22 : h;
+      this.part(
+        group,
+        "box",
+        [w, foundation + slabHeight, d],
+        [0, (slabHeight - foundation) / 2, 0],
+        descriptor.color,
+      );
+      if (descriptor.approachFeature === "terrace") {
+        // Low stone edging leaves both ends open to the stepping stones.
+        for (const side of [-1, 1])
+          this.part(
+            group,
+            "box",
+            [w, 0.22, 0.22],
+            [0, h - 0.11, side * (d / 2 - 0.11)],
+            0x948c79,
+          );
+      }
+      return true;
+    }
+    if (
+      descriptor.approachFeature === "pavilion" ||
+      descriptor.approachFeature === "crossing-garden"
+    ) {
+      const foundation = descriptor.support.baseY - descriptor.support.bottomY;
+      this.part(
+        group,
+        "box",
+        [w, foundation + 0.18, d],
+        [0, (0.18 - foundation) / 2, 0],
+        descriptor.color,
+      );
+      if (descriptor.approachFeature === "crossing-garden") {
+        this.part(
+          group,
+          "box",
+          [w * 0.82, 0.2, d * 0.75],
+          [0, 0.28, 0],
+          0x688355,
+        );
+        for (const side of [-1, 1])
+          this.part(
+            group,
+            "sphere",
+            [w * 0.25, 0.42, d * 0.55],
+            [side * w * 0.25, 0.58, 0],
+            0x82a464,
+          );
+      } else {
+        for (const x of [-1, 1])
+          for (const z of [-1, 1])
+            this.part(
+              group,
+              "column",
+              [0.3, h * 0.68, 0.3],
+              [x * w * 0.36, h * 0.34 + 0.18, z * d * 0.32],
+              descriptor.color,
+            );
+        const roof =
+          biome === "brutalist-gardens"
+            ? "box"
+            : biome === "dreamwood"
+              ? "dome"
+              : "pediment";
+        this.part(
+          group,
+          "box",
+          [w, 0.12, d],
+          [0, h * 0.68 + 0.24, 0],
+          descriptor.color,
+        );
+        this.part(
+          group,
+          roof,
+          [w, h * 0.24, d],
+          [0, h * (roof === "dome" ? 0.74 : 0.86), 0],
+          biome === "dreamwood" ? 0x8873a6 : 0x746951,
+          biome === "dreamwood",
+        );
+        this.part(
+          group,
+          "box",
+          [w * 0.6, 0.25, 0.45],
+          [0, 0.4, d * 0.28],
+          descriptor.color,
+        );
+      }
+      return true;
+    }
+    if (descriptor.approachFeature === "broken-column") {
+      this.part(group, "box", [w, h * 0.12, d], [0, h * 0.06, 0], 0xb3a58c);
+      this.part(
+        group,
+        "column",
+        [w * 0.58, h * 0.78, d * 0.58],
+        [0, h * 0.51, 0],
+        0xc5b79e,
+      );
+      this.part(
+        group,
+        "box",
+        [w * 0.65, h * 0.1, d * 0.65],
+        [0, h * 0.95, 0],
+        0xb3a58c,
+      );
+      return true;
+    }
     if (descriptor.architecture) {
       const plan = descriptor.architecture;
       const palette = DISTRICT_MONUMENT_FORMS.some((form) => form === plan.form)

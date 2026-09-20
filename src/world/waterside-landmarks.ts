@@ -40,7 +40,13 @@ export function landmarkFootings(plan: ArchitecturePlan): LandmarkFooting[] {
   ) => ({ x: x * plan.mirror, z, width, depth, dry });
   switch (plan.form) {
     case "island-abbey":
-      return [footing(0, 0, 0.76, 0.7), footing(0, 0.4, 0.12, 0.08)];
+      return [
+        footing(0, 0, 0.76, 0.7),
+        footing(0, -0.4, 0.12, 0.08),
+        ...[-1, 1].flatMap((side) =>
+          [-0.36, -0.44].map((z) => footing(side * 0.09, z, 0.025, 0.025)),
+        ),
+      ];
     case "lighthouse-complex":
       return [
         footing(-0.2, -0.24, 0.22, 0.24, true),
@@ -196,13 +202,20 @@ export function watersideLandmarkParts(
       box(
         0,
         0.055 + step * 0.012,
-        0.4 - step * 0.025,
+        -0.4 + step * 0.025,
         0.13,
         0.025,
         0.045,
         "trim",
       );
-    box(0, 0.025, 0.4, 0.23, 0.05, 0.1, "roof");
+    box(0, 0.025, -0.4, 0.23, 0.05, 0.1, "roof");
+    // Sheltered boat landing: all four piles share the checked footing manifest.
+    for (const side of [-1, 1]) {
+      for (const z of [-0.36, -0.44]) column(side * 0.09, 0.05, z, 0.02, 0.12);
+      box(side * 0.105, 0.065, -0.4, 0.012, 0.035, 0.1, "trim");
+      add("sphere", [0.018, 0.025, 0.018], [side * 0.06, 0.13, -0.445], "glow");
+    }
+    add("pediment", [0.23, 0.07, 0.13], [0, 0.2, -0.4], "roof");
   } else if (plan.form === "lighthouse-complex") {
     const x = -0.2,
       z = -0.24,

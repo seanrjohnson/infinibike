@@ -1,3 +1,7 @@
+import {
+  applyCityNeighborhood,
+  type CityNeighborhood,
+} from "./city-neighborhoods";
 import { monumentParts, type MonumentForm } from "./monument-generator";
 import { hashString, seededRandom } from "../domain/random";
 import type { BiomeId } from "../domain/biomes";
@@ -52,6 +56,7 @@ export type ArchitectureFamily = keyof typeof ARCHITECTURE_FORMS;
 export type ArchitectureForm =
   (typeof ARCHITECTURE_FORMS)[ArchitectureFamily][number] | MonumentForm;
 export type ArchitecturePlan = {
+  neighborhood?: CityNeighborhood;
   family: ArchitectureFamily;
   form: ArchitectureForm;
   chapter: number;
@@ -267,15 +272,19 @@ export function planArchitecture(
     ruin: family === "ancient" ? 0.15 + random() * 0.5 : 0,
     signature: "",
   };
+  applyCityNeighborhood(plan, biome, normalized, distance, lane);
   plan.signature = [
-    form,
+    plan.form,
     plan.bays,
     plan.tiers,
     plan.crown,
     plan.palette,
     plan.mirror,
-    Math.round(width * 10),
-    Math.round(height * 10),
+    Math.round(plan.width * 10),
+    Math.round(plan.height * 10),
+    ...(plan.neighborhood
+      ? [plan.neighborhood.id, plan.neighborhood.role]
+      : []),
     Math.round(plan.setback * 100),
   ].join(":");
   return plan;

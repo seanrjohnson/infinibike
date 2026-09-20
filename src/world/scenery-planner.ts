@@ -1,3 +1,4 @@
+import { obscuresLandmark, landmarkSurroundings } from "./landmark-approaches";
 import { isWaterside, isCrossing } from "./waterside-landmarks";
 import { shoreOffset, specialLandmarkSupport } from "./landmark-support";
 import type { MonumentForm } from "./monument-generator";
@@ -37,6 +38,9 @@ import {
 } from "./world-generator";
 
 export type SceneryDescriptor = {
+  approachFeature?:
+    "broken-column" | "path" | "terrace" | "pavilion" | "crossing-garden";
+  approachGroup?: { id: string; count: number };
   biome?: BiomeId;
   architecture?: ArchitecturePlan;
   id: string;
@@ -56,6 +60,8 @@ export type PlacedScenery = SceneryDescriptor & { support: GroundSupport };
 /** The planner never receives graphics quality, load state or camera distance. */
 export class SceneryPlanner {
   private readonly candidates = new Map<number, SceneryDescriptor[]>();
+  private readonly monumentPlans = new Map<number, PlacedScenery[]>();
+  private readonly basePlans = new Map<number, PlacedScenery[]>();
   private readonly plans = new Map<number, PlacedScenery[]>();
   constructor(
     readonly generator: WorldGenerator,
@@ -235,6 +241,8 @@ export class SceneryPlanner {
                 ? 30 + lane * 18
                 : 48 + lane * 28
               : (category === "tree" ? 26 : 12) + lane * 22 + random() * 10);
+      if (architecture?.neighborhood && !architecture.monumental)
+        offset += side * architecture.neighborhood.streetSetback;
       if (architecture && isWaterside(architecture.form)) {
         const shore = shoreOffset(this.surface, distance, side, architecture);
         if (shore === undefined) return;
@@ -386,17 +394,9 @@ export class SceneryPlanner {
     return segments;
   }
 
-  plan(index: number): PlacedScenery[] {
-    const cached = this.plans.get(index);
-    if (cached) return cached;
-    this.surface.prepare((index + 6) * CHUNK_LENGTH_M);
-    const neighbors: SceneryDescriptor[] = [];
-    for (let i = Math.max(0, index - 4); i <= index + 4; i++)
-      neighbors.push(...this.raw(i));
-    const streets = this.exclusions(index);
-    const city = this.generator.settings.landscape === "city";
+  private parallelStreets(index: number): PlanarStreetSegment[] {
     const parallelStreets: PlanarStreetSegment[] = [];
-    if (city) {
+    if (this.generator.settings.landscape === "city") {
       for (
         let distance = Math.max(0, index * CHUNK_LENGTH_M - 150);
         distance < (index + 1) * CHUNK_LENGTH_M + 150;
@@ -417,30 +417,22 @@ export class SceneryPlanner {
           });
       }
     }
+    return parallelStreets;
+  }
+
+  private basePlan(index: number, monumentsOnly = false): PlacedScenery[] {
+    const cache = monumentsOnly ? this.monumentPlans : this.basePlans;
+    const cached = cache.get(index);
+    if (cached) return cached;
+    this.surface.prepare((index + 6) * CHUNK_LENGTH_M);
+    const neighbors: SceneryDescriptor[] = [];
+    for (let i = Math.max(0, index - 4); i <= index + 4; i++)
+      neighbors.push(...this.raw(i));
+    const streets = this.exclusions(index);
+    const parallelStreets = this.parallelStreets(index);
     const result: PlacedScenery[] = [];
     for (const candidate of this.raw(index)) {
-      if (
-        city &&
-        !candidate.architecture?.monumental &&
-        candidate.category === "building" &&
-        neighbors.some((other) => {
-          if (!other.architecture?.monumental) return false;
-          const dx = candidate.footprint.x - other.footprint.x,
-            dz = candidate.footprint.z - other.footprint.z;
-          const h = other.footprint.heading;
-          const towardRoad =
-            -(dx * Math.cos(h) + dz * Math.sin(h)) *
-            Number(other.id.split(":")[3]);
-          const along = dx * Math.sin(h) - dz * Math.cos(h);
-          return (
-            towardRoad > 0 &&
-            towardRoad < other.footprint.halfAcross + 60 &&
-            // Widen toward the riding corridor so approach views stay open.
-            Math.abs(along) < other.footprint.halfAlong + towardRoad * 1.6
-          );
-        })
-      )
-        continue;
+      if (monumentsOnly && !candidate.architecture?.monumental) continue;
       if (
         candidate.architecture?.monumental &&
         footprintIntersectsStreetSegments(
@@ -503,12 +495,91 @@ export class SceneryPlanner {
         continue;
       if (support) result.push({ ...candidate, support });
     }
+    cache.set(index, result);
+    return result;
+  }
+
+  plan(index: number): PlacedScenery[] {
+    const cached = this.plans.get(index);
+    if (cached) return cached;
+    const neighbors: SceneryDescriptor[] = [];
+    const monuments: PlacedScenery[] = [];
+    for (let i = Math.max(0, index - 4); i <= index + 4; i++) {
+      neighbors.push(...this.raw(i));
+      monuments.push(...this.basePlan(i, true));
+    }
+    const isVisible = (item: SceneryDescriptor) =>
+      !monuments.some((monument) => obscuresLandmark(item, monument));
+    const visible = neighbors.filter(isVisible);
+    const result = this.basePlan(index).filter(isVisible);
+    const companions = monuments.flatMap(landmarkSurroundings);
+    const streets = [...this.exclusions(index), ...this.parallelStreets(index)];
+    const accepted: PlacedScenery[] = [];
+    for (const detail of companions.filter((item) => item.owner === index)) {
+      if (
+        footprintIntersectsStreetSegments(detail.footprint, streets, 10) ||
+        visible.some((other) =>
+          footprintsOverlap(detail.footprint, other.footprint, 1),
+        ) ||
+        companions.some(
+          (other) =>
+            other.id < detail.id &&
+            footprintsOverlap(
+              detail.footprint,
+              other.footprint,
+              detail.approachGroup &&
+                detail.approachGroup.id === other.approachGroup?.id
+                ? 0
+                : 1,
+            ),
+        )
+      )
+        continue;
+      const support = supportPlacement(
+        this.surface,
+        detail.footprint,
+        detail.distanceM,
+        detail.policy,
+      );
+      if (support) {
+        const paving =
+          detail.approachFeature === "path" ||
+          detail.approachFeature === "terrace" ||
+          detail.approachFeature === "pavilion";
+        if (paving && support.baseY - support.bottomY > 0.65) continue;
+        accepted.push({ ...detail, support });
+      }
+    }
+    // Keep complete walks: unsuitable terrain must not leave disconnected slabs.
+    for (const detail of accepted) {
+      if (detail.approachGroup) {
+        const walk = accepted
+          .filter((item) => item.approachGroup?.id === detail.approachGroup!.id)
+          .sort((a, b) => a.id.localeCompare(b.id));
+        if (
+          walk.length !== detail.approachGroup.count ||
+          walk.some(
+            (item, slot) =>
+              slot > 0 &&
+              Math.abs(item.support.baseY - walk[slot - 1]!.support.baseY) >
+                0.4,
+          )
+        )
+          continue;
+      }
+      result.push(detail);
+    }
     this.plans.set(index, result);
     return result;
   }
   retire(first: number, last: number): void {
     for (const index of this.plans.keys())
       if (index < first - 4 || index > last + 4) this.plans.delete(index);
+    for (const index of this.monumentPlans.keys())
+      if (index < first - 4 || index > last + 4)
+        this.monumentPlans.delete(index);
+    for (const index of this.basePlans.keys())
+      if (index < first - 4 || index > last + 4) this.basePlans.delete(index);
     for (const index of this.candidates.keys())
       if (index < first - 4 || index > last + 4) this.candidates.delete(index);
   }

@@ -74,8 +74,12 @@ describe("procedural architecture", () => {
       planArchitecture("long-ride", biome, slot * 25 + 12.5, 1, 0),
     );
     const family = plans[0]!.family;
+    const expectedForms =
+      biome === "downtown"
+        ? ["civic-tower", "split-towers", "terraced"]
+        : ARCHITECTURE_FORMS[family];
     expect(new Set(plans.map((plan) => plan.form))).toEqual(
-      new Set(ARCHITECTURE_FORMS[family]),
+      new Set(expectedForms),
     );
     expect(new Set(plans.map((plan) => plan.signature)).size).toBeGreaterThan(
       1150,
@@ -88,7 +92,7 @@ describe("procedural architecture", () => {
     for (let start = 0; start < plans.length; start += 80) {
       expect(
         new Set(plans.slice(start, start + 80).map((plan) => plan.form)).size,
-      ).toBe(ARCHITECTURE_FORMS[family].length);
+      ).toBeGreaterThanOrEqual(biome === "downtown" ? 2 : expectedForms.length);
     }
     expect(plans[1173]).toEqual(
       planArchitecture(" LONG-RIDE ", biome, 1173 * 25 + 12.5, 1, 0),

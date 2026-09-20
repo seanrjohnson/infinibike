@@ -81,6 +81,20 @@ for (const biome of Object.keys(DECKS) as (keyof typeof DECKS)[]) {
             ),
           ),
         ).toBe(0);
+        if (biome === "lakeside") {
+          const shoreline = await page.evaluate(() =>
+            window
+              .__INFINIBIKE_VISUAL_QA__!.scenery(23)
+              .filter((item) => item.id.includes(":approach:")),
+          );
+          expect(shoreline.length).toBeGreaterThan(0);
+          await page.evaluate(() =>
+            window.__INFINIBIKE_VISUAL_QA__!.setDistance(5830),
+          );
+          await page.screenshot({
+            path: testInfo.outputPath("shoreline-approach.png"),
+          });
+        }
         const monuments = await page.evaluate(async (forms) => {
           const qa = window.__INFINIBIKE_VISUAL_QA__!;
           const results: ReturnType<typeof qa.scenery> = [];

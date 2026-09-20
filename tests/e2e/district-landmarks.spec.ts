@@ -74,6 +74,30 @@ for (const biome of Object.keys(DISTRICT_MONUMENT_DECKS) as BiomeId[]) {
             ),
           ),
         ).toBe(0);
+        const neighborhoods = await page.evaluate(() => {
+          const qa = window.__INFINIBIKE_VISUAL_QA__!;
+          const found = new Map<string, number>();
+          for (let index = 2; index < 20; index++)
+            for (const item of qa.scenery(index)) {
+              if (item.architecture?.neighborhood)
+                found.set(
+                  item.architecture.neighborhood.id,
+                  Number(item.id.split(":")[2]),
+                );
+            }
+          return [...found.entries()];
+        });
+        expect(neighborhoods).toHaveLength(4);
+        for (const [name, distance] of neighborhoods) {
+          await page.evaluate(
+            (distance) =>
+              window.__INFINIBIKE_VISUAL_QA__!.setDistance(distance - 60),
+            distance,
+          );
+          await page.screenshot({
+            path: testInfo.outputPath(name + "-neighborhood.png"),
+          });
+        }
         const monuments = await page.evaluate(async () => {
           const qa = window.__INFINIBIKE_VISUAL_QA__!;
           const results: ReturnType<typeof qa.scenery> = [];

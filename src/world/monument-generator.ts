@@ -218,6 +218,7 @@ export function planMonument(
     ...base,
     form,
     monumental: true,
+    neighborhood: undefined,
     landmark: true,
     width,
     depth,

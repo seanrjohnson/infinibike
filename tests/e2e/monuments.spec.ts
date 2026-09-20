@@ -68,6 +68,52 @@ for (const mobile of [false, true]) {
           await page.evaluate(() => window.__INFINIBIKE_DEBUG__!.contextLosses),
         ),
       ).toBe(0);
+      const approachCount = await page.evaluate(() => {
+        const qa = window.__INFINIBIKE_VISUAL_QA__!;
+        return Array.from({ length: 20 }, (_, index) => qa.scenery(index))
+          .flat()
+          .filter((item) => item.id.includes(":approach:")).length;
+      });
+      expect(approachCount).toBeGreaterThan(0);
+      const column = await page.evaluate(() => {
+        const qa = window.__INFINIBIKE_VISUAL_QA__!;
+        return Array.from({ length: 20 }, (_, index) => qa.scenery(index))
+          .flat()
+          .find((item) => item.approachFeature === "broken-column");
+      });
+      expect(column).toBeTruthy();
+      await page.evaluate(
+        (distance) =>
+          window.__INFINIBIKE_VISUAL_QA__!.setDistance(distance - 35),
+        Number(column!.id.split(":")[2]),
+      );
+      await page.screenshot({
+        path: testInfo.outputPath("broken-column-approach.png"),
+      });
+      const terrace = await page.evaluate(() =>
+        window
+          .__INFINIBIKE_VISUAL_QA__!.scenery(18)
+          .find((item) => item.approachFeature === "terrace"),
+      );
+      expect(terrace).toBeTruthy();
+      await page.evaluate(() =>
+        window.__INFINIBIKE_VISUAL_QA__!.setDistance(4580),
+      );
+      await page.screenshot({
+        path: testInfo.outputPath("stepped-path-terrace.png"),
+      });
+      const shelter = await page.evaluate(() =>
+        window
+          .__INFINIBIKE_VISUAL_QA__!.scenery(37)
+          .find((item) => item.approachFeature === "pavilion"),
+      );
+      expect(shelter).toBeTruthy();
+      await page.evaluate(() =>
+        window.__INFINIBIKE_VISUAL_QA__!.setDistance(9315),
+      );
+      await page.screenshot({
+        path: testInfo.outputPath("long-walk-pavilion.png"),
+      });
       const monuments = await page.evaluate(async () => {
         const qa = window.__INFINIBIKE_VISUAL_QA__!;
         const results: ReturnType<typeof qa.scenery> = [];

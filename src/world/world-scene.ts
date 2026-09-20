@@ -324,14 +324,25 @@ export class WorldScene {
         scenery: (index) =>
           this.chunkBuilder.context.planner
             .plan(index)
-            .map(({ id, biome, architecture, asset, footprint, height }) => ({
-              architecture,
-              biome,
-              id,
-              asset,
-              footprint,
-              height,
-            })),
+            .map(
+              ({
+                id,
+                biome,
+                architecture,
+                asset,
+                footprint,
+                height,
+                approachFeature,
+              }) => ({
+                approachFeature,
+                architecture,
+                biome,
+                id,
+                asset,
+                footprint,
+                height,
+              }),
+            ),
         renderedCityMonuments: () => {
           const ids: string[] = [];
           for (const chunk of this.chunks.values())
@@ -2457,6 +2468,7 @@ declare global {
     __INFINIBIKE_VISUAL_QA__?: {
       freeze: () => void;
       scenery: (index: number) => {
+        approachFeature?: import("./scenery-planner").SceneryDescriptor["approachFeature"];
         biome?: BiomeId;
         architecture?: import("./architecture-generator").ArchitecturePlan;
         id: string;
