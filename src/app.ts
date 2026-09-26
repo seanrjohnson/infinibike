@@ -1,3 +1,11 @@
+import { DISCOVERY_CATALOG, DISCOVERY_IDS } from "./world/discovery-catalog";
+import {
+  loadJournal,
+  saveJournal,
+  recordDiscovery,
+  type Encounter,
+  type Discovery,
+} from "./domain/discovery-journal";
 import {
   BIOME_CATALOG,
   LANDSCAPE_LABELS,
@@ -108,7 +116,14 @@ import type {
 } from "./world/world-scene";
 
 type View =
-  "home" | "setup" | "calibration" | "ride" | "pause" | "summary" | "history";
+  | "home"
+  | "setup"
+  | "calibration"
+  | "ride"
+  | "pause"
+  | "summary"
+  | "history"
+  | "discoveries";
 
 const ICONS = {
   Bluetooth,
@@ -154,6 +169,10 @@ function formatDistance(distanceM: number): string {
 }
 
 export class InfinibikeApp {
+  private journal = loadJournal(DISCOVERY_IDS);
+  private readonly rideDiscoveries = new Set<string>();
+  private journalStorageFailed = false;
+  private snapshotsEnabled = true;
   private readonly world: WorldScene;
   private source?: TrainerSource;
   private sourceUnsubscribers: Unsubscribe[] = [];
@@ -207,6 +226,9 @@ export class InfinibikeApp {
     this.world.setCameraSettings(this.cameraSettings);
     this.persistPreferences();
     this.world.setFrameHandler((dt) => this.update(dt));
+    this.world.setDiscoveryHandler((encounters) =>
+      this.recordEncounters(encounters),
+    );
     this.installGlobalInput();
     this.showHome();
     document.addEventListener("visibilitychange", () => {
@@ -262,6 +284,7 @@ export class InfinibikeApp {
             <button id="demo"><i data-lucide="keyboard"></i>Ride with keys or touch</button>
           </div>
           <div class="quiet-actions">
+            <button id="discoveries" class="quiet">Discoveries</button>
             <button id="history" class="quiet"><i data-lucide="history"></i>Ride history</button>
           </div>
           <p class="support-note">Trainer mode requires an FTMS bike and Chrome or Edge. Demo mode works without Bluetooth.</p>
@@ -269,6 +292,9 @@ export class InfinibikeApp {
       </main>
     `;
     this.icons();
+    this.root
+      .querySelector("#discoveries")
+      ?.addEventListener("click", () => this.showDiscoveries());
     this.root
       .querySelector("#reconnect")
       ?.addEventListener("click", () => void this.connectTrainer(true));
@@ -775,6 +801,7 @@ export class InfinibikeApp {
     this.snapshot = this.model.getSnapshot();
     this.rideStartedAt = new Date();
     this.rideSamples = [];
+    this.rideDiscoveries.clear();
     this.finishingRide = false;
     this.view = "ride";
     const delay = new URLSearchParams(location.search).has("e2e") ? 60 : 700;
@@ -1008,6 +1035,7 @@ export class InfinibikeApp {
       this.rideSamples,
     );
     this.lastSummary.preferences = this.currentPreferences();
+    this.lastSummary.discoveries = [...this.rideDiscoveries];
     saveRideSummary(this.lastSummary);
     this.showSummary(this.lastSummary);
   }
@@ -1037,6 +1065,7 @@ export class InfinibikeApp {
           </div>
           <div class="seed-summary"><span>World seed</span><strong>${escapeHtml(summary.environment.seed)}</strong></div>
           <div class="seed-summary"><span>Landscape</span><strong>${LANDSCAPE_LABELS[summary.environment.landscape]}</strong></div>
+          <p>${(summary.discoveries ?? []).length} new discoveries${(summary.discoveries ?? []).length ? ": " + (summary.discoveries ?? []).map((id) => escapeHtml(DISCOVERY_CATALOG.find((item) => item.id === id)?.name ?? id)).join(", ") : ""}.</p><button id="summary-discoveries" class="quiet">Open discovery journal</button>
           <div class="seed-summary"><span>Ride goal</span><strong>${goalLabel(summary.rideMode)}</strong></div>
           <section class="ride-analysis" aria-labelledby="analysis-title">
             <header><h2 id="analysis-title">Ride analysis</h2><span>${summary.ftpW} W FTP</span></header>
@@ -1048,6 +1077,9 @@ export class InfinibikeApp {
         </section>
       </main>`;
     this.icons();
+    this.root
+      .querySelector("#summary-discoveries")
+      ?.addEventListener("click", () => this.showDiscoveries(summary));
     this.drawRideChart(summary.samples);
     this.root
       .querySelector("#export")
@@ -1087,6 +1119,158 @@ export class InfinibikeApp {
       this.showHome();
       this.showToast("Route loaded. Choose a trainer or demo to ride again.");
     }
+  }
+
+  private recordEncounters(encounters: Encounter[]): void {
+    if (!this.gameActive || this.paused) return;
+    const fresh = encounters.filter(
+      (item) => !this.journal.entries.some((entry) => entry.id === item.id),
+    );
+    if (!fresh.length) return;
+    for (const item of fresh.slice(0, 3)) {
+      const snapshot = this.snapshotsEnabled
+        ? this.world.captureDiscovery(item.id)
+        : undefined;
+      const next = recordDiscovery(
+        this.journal,
+        item,
+        this.environment,
+        snapshot,
+        DISCOVERY_IDS,
+      );
+      if (next.entries.length > this.journal.entries.length)
+        this.rideDiscoveries.add(item.id);
+      this.journal = next;
+    }
+    this.journalStorageFailed = !saveJournal(this.journal);
+  }
+
+  private async replayDiscovery(entry: Discovery): Promise<void> {
+    this.environment = normalizeEnvironment(entry.environment, 1);
+    this.persistPreferences();
+    this.pendingReplay = true;
+    if (this.source?.getStatus().state === "connected" && this.profile) {
+      this.showSetup();
+      await this.startPendingReplay();
+    } else {
+      this.showHome();
+      this.showToast(
+        "Discovery route loaded. Choose a trainer or demo to start at the beginning.",
+      );
+    }
+  }
+
+  private showDiscoveries(summary?: RideSummary): void {
+    this.view = "discoveries";
+    this.world.setRealtime(false);
+    this.root.innerHTML = `<main class="history-shell"><section class="history-content discovery-content">
+      <header class="screen-header"><button id="journal-back" class="icon-button" aria-label="Back">&larr;</button><div><p class="eyebrow">Stored on this device</p><h1>Discoveries</h1></div></header>
+      <p id="journal-progress" role="status"></p>
+      <p>Find landmarks, wildlife, scenery and passing events. A first encounter is recorded when it is nearby and in the camera frame, with a clear view over the terrain. Each family counts once across all rides.</p>
+      <div class="journal-filters"><label>Category<select id="journal-category" aria-label="Category"><option value="">All categories</option>${["Landmarks", "Events", "Wildlife", "Scenery"].map((value) => `<option>${value}</option>`).join("")}</select></label>
+      <label>Biome<select id="journal-biome" aria-label="Biome"><option value="">All biomes</option>${Object.entries(
+        BIOME_CATALOG,
+      )
+        .map(([id, item]) => `<option value="${id}">${item.name}</option>`)
+        .join("")}</select></label>
+      <label class="journal-toggle"><input id="journal-unseen" type="checkbox"> Show undiscovered only</label>
+      <label class="journal-toggle"><input id="journal-snapshots" type="checkbox" ${this.snapshotsEnabled ? "checked" : ""}> Capture screenshots this session</label></div>
+      <p>Screenshots stay on this device. If photo storage fills up, new discoveries still count. Ride this route again starts at the beginning with the saved landscape and biome mix.</p>
+      <p id="journal-storage" role="status">${this.journalStorageFailed ? "Device storage is unavailable. New progress is kept only for this session." : ""}</p>
+      <div id="journal-list" class="journal-grid"></div>
+      <details><summary>Manage journal data</summary><p>Deleting an entry lets you discover it again. Clearing the journal removes all progress and screenshots from this device.</p><button id="journal-photos">Remove all screenshots</button><button id="journal-clear">Clear journal...</button><div id="journal-confirm"></div></details>
+      </section></main>`;
+    const save = () => {
+      this.journalStorageFailed = !saveJournal(this.journal);
+      this.root.querySelector("#journal-storage")!.textContent = this
+        .journalStorageFailed
+        ? "Could not save changes. Device storage is unavailable."
+        : "Changes saved on this device.";
+    };
+    const render = () => {
+      const category =
+        this.root.querySelector<HTMLSelectElement>("#journal-category")!.value;
+      const biome =
+        this.root.querySelector<HTMLSelectElement>("#journal-biome")!.value;
+      const unseen =
+        this.root.querySelector<HTMLInputElement>("#journal-unseen")!.checked;
+      this.root.querySelector("#journal-progress")!.textContent =
+        `${this.journal.entries.length} of ${DISCOVERY_CATALOG.length} discovered`;
+      const filtered = DISCOVERY_CATALOG.filter(
+        (item) =>
+          (!category || item.category === category) &&
+          (!biome || item.biomes.includes(biome as BiomeId)) &&
+          (!unseen ||
+            !this.journal.entries.some((entry) => entry.id === item.id)),
+      );
+      this.root.querySelector("#journal-list")!.innerHTML =
+        filtered
+          .map((item) => {
+            const entry = this.journal.entries.find(
+              (entry) => entry.id === item.id,
+            );
+            return `<article class="discovery-card" data-discovery="${item.id}"><p class="eyebrow">${item.category} &middot; ${entry ? "\u2713 Discovered" : "Not yet discovered"}</p><h2>${item.name}</h2><p>${entry ? BIOME_CATALOG[entry.biome].name : item.biomes.map((b) => BIOME_CATALOG[b].name).join(", ")}</p>${entry ? `<p>${escapeHtml(entry.name)} &middot; ${formatDistance(entry.distanceM)}</p>${entry.snapshot ? `<img loading="lazy" width="320" alt="First encounter with ${item.name}" src="${entry.snapshot}">` : "<p>No screenshot saved.</p>"}<small>${escapeHtml(new Date(entry.discoveredAt).toLocaleDateString())} &middot; Seed ${escapeHtml(entry.environment.seed)}</small><div class="journal-actions"><button data-journal-replay="${item.id}">Ride this route again</button><button data-journal-delete="${item.id}" aria-label="Delete ${item.name} discovery">Delete entry</button></div>` : ""}</article>`;
+          })
+          .join("") || "<p>No discoveries match these filters.</p>";
+      this.root
+        .querySelectorAll<HTMLButtonElement>("[data-journal-replay]")
+        .forEach((button) =>
+          button.addEventListener("click", () => {
+            const entry = this.journal.entries.find(
+              (item) => item.id === button.dataset.journalReplay,
+            );
+            if (entry) void this.replayDiscovery(entry);
+          }),
+        );
+      this.root
+        .querySelectorAll<HTMLButtonElement>("[data-journal-delete]")
+        .forEach((button) =>
+          button.addEventListener("click", () => {
+            this.journal.entries = this.journal.entries.filter(
+              (item) => item.id !== button.dataset.journalDelete,
+            );
+            save();
+            render();
+          }),
+        );
+    };
+    this.root
+      .querySelector("#journal-back")
+      ?.addEventListener("click", () =>
+        summary ? this.showSummary(summary) : this.showHome(),
+      );
+    for (const id of ["journal-category", "journal-biome", "journal-unseen"])
+      this.root.querySelector(`#${id}`)?.addEventListener("change", render);
+    this.root
+      .querySelector("#journal-snapshots")
+      ?.addEventListener("change", (event) => {
+        this.snapshotsEnabled = (event.target as HTMLInputElement).checked;
+      });
+    this.root
+      .querySelector("#journal-photos")
+      ?.addEventListener("click", () => {
+        for (const entry of this.journal.entries) delete entry.snapshot;
+        save();
+        render();
+      });
+    this.root.querySelector("#journal-clear")?.addEventListener("click", () => {
+      this.root.querySelector("#journal-confirm")!.innerHTML =
+        `<p>Delete all discoveries permanently?</p><button id="journal-confirm-clear">Delete all discoveries</button><button id="journal-cancel">Cancel</button>`;
+      this.root
+        .querySelector("#journal-confirm-clear")
+        ?.addEventListener("click", () => {
+          this.journal.entries = [];
+          save();
+          render();
+          this.root.querySelector("#journal-confirm")!.innerHTML = "";
+        });
+      this.root
+        .querySelector("#journal-cancel")
+        ?.addEventListener("click", () => {
+          this.root.querySelector("#journal-confirm")!.innerHTML = "";
+        });
+    });
+    render();
   }
 
   private showHistory(): void {

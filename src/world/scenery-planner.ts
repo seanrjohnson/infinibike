@@ -1,3 +1,9 @@
+import {
+  scenicDetail,
+  detailSize,
+  isSurrealEvent,
+  type ScenicDetail,
+} from "./scenic-detail";
 import { obscuresLandmark, landmarkSurroundings } from "./landmark-approaches";
 import { isWaterside, isCrossing } from "./waterside-landmarks";
 import { shoreOffset, specialLandmarkSupport } from "./landmark-support";
@@ -38,6 +44,7 @@ import {
 } from "./world-generator";
 
 export type SceneryDescriptor = {
+  scenicDetail?: ScenicDetail;
   approachFeature?:
     "broken-column" | "path" | "terrace" | "pavilion" | "crossing-garden";
   approachGroup?: { id: string; count: number };
@@ -196,6 +203,11 @@ export class SceneryPlanner {
         width = Math.max(width + 1, 4);
         depth = Math.max(depth + 1, 4);
       }
+      const detail =
+        category === "prop"
+          ? scenicDetail(settings.seed, biome, id)
+          : undefined;
+      if (detail) [width, height, depth] = detailSize(detail);
       let architecture: ArchitecturePlan | undefined;
       if (biome && category === "building") {
         let planned = planArchitecture(
@@ -252,6 +264,7 @@ export class SceneryPlanner {
       if (crossing) offset = 0;
       const heading = road.heading;
       result.push({
+        scenicDetail: detail,
         architecture,
         biome,
         id,
@@ -276,15 +289,17 @@ export class SceneryPlanner {
         },
         priority: architecture?.monumental
           ? -1
-          : hashString(`${settings.seed}:${id}:priority`) +
-            (category === "building" ? 0 : 4_294_967_296),
+          : detail && isSurrealEvent(detail)
+            ? 4_294_967_295
+            : hashString(`${settings.seed}:${id}:priority`) +
+              (category === "building" ? 0 : 4_294_967_296),
         policy: crossing
           ? "road-span"
           : architecture && isWaterside(architecture.form)
             ? "water-edge"
             : architecture?.monumental
               ? "monument"
-              : category === "building"
+              : detail || category === "building"
                 ? "upright"
                 : category === "tree" || asset === "rock_cluster"
                   ? "embedded"
@@ -493,7 +508,13 @@ export class SceneryPlanner {
           this.generator.sample(candidate.distanceM).elevationM + 1
       )
         continue;
-      if (support) result.push({ ...candidate, support });
+      if (
+        support &&
+        (!candidate.scenicDetail ||
+          support.baseY - support.bottomY <=
+            (isSurrealEvent(candidate.scenicDetail) ? 1.8 : 0.65))
+      )
+        result.push({ ...candidate, support });
     }
     cache.set(index, result);
     return result;

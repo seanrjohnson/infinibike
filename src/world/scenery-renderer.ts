@@ -1,3 +1,4 @@
+import { isLifeGroup } from "./scenic-detail-renderer";
 import { FINAL_MONUMENT_FORMS, landmarkFootings } from "./waterside-landmarks";
 import { landmarkPoint } from "./landmark-support";
 import { isMeadowMotion } from "./meadow-monument-motion";
@@ -471,12 +472,26 @@ export function renderScenery(
         if (simplified) object.userData.disableShadows = true;
       }
     });
-    const moving = group.children.filter(isMeadowMotion);
+    const moving = group.children.filter(
+      (object) => isMeadowMotion(object) || isLifeGroup(object),
+    );
     if (moving.length) {
       const frame = new THREE.Group();
       frame.position.copy(group.position);
       frame.quaternion.copy(group.quaternion);
       for (const motion of moving) {
+        if (isLifeGroup(motion) && motion.userData.life.kind !== "nest") {
+          motion.userData.ground = (x: number, z: number) => {
+            const angle = descriptor.rotationY;
+            return (
+              context.surface.sample(
+                footprint.x + Math.cos(angle) * x + Math.sin(angle) * z,
+                footprint.z - Math.sin(angle) * x + Math.cos(angle) * z,
+                descriptor.distanceM,
+              ).height - support.baseY
+            );
+          };
+        }
         motion.userData.distanceM = descriptor.distanceM;
         motion.userData.monumentId = descriptor.id;
         frame.add(motion);

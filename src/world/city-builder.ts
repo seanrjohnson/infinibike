@@ -653,7 +653,11 @@ export class CityBuilder extends SurfaceBuilder {
     group.userData.renderedMonumentIds = planned
       .filter((item) => item.architecture?.monumental)
       .map((item) => item.id);
-    group.add(renderScenery(this.context, planned, detail));
+    const scenery = renderScenery(this.context, planned, detail);
+    // City geometry gets a second batching pass; keep articulated actors intact.
+    const animations = scenery.getObjectByName("monument-animations");
+    animations?.removeFromParent();
+    group.add(scenery);
 
     if (detail === "near") {
       const parkingDensity = cityParkingDensity(
@@ -1055,6 +1059,8 @@ export class CityBuilder extends SurfaceBuilder {
     lamps.userData.disableShadows = true;
     group.add(poles, lamps);
 
-    return batchStatic(group);
+    const result = batchStatic(group);
+    if (animations) result.add(animations);
+    return result;
   }
 }

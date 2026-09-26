@@ -1,3 +1,11 @@
+import { isSurrealEvent } from "./scenic-detail";
+import { DISCOVERY_IDS } from "./discovery-catalog";
+import type { Encounter } from "../domain/discovery-journal";
+import {
+  isLifeGroup,
+  updateLife,
+  type LifeGroup,
+} from "./scenic-detail-renderer";
 import {
   isMeadowMotion,
   updateMeadowMotion,
@@ -38,6 +46,7 @@ import {
 import { ChunkBuilder } from "./chunk-builder";
 import { QUALITY, type TerrainDetail } from "./render-quality";
 import { TerrainSurface } from "./terrain-surface";
+import { TerrainStream } from "./terrain-stream";
 
 type QualityLevel = "low" | "medium" | "high";
 export type CameraAngle = "left" | "center" | "right";
@@ -143,6 +152,16 @@ function setShadow(root: THREE.Object3D, enabled: boolean): void {
 }
 
 export class WorldScene {
+  private onDiscovery?: (encounters: Encounter[]) => void;
+  private lastDiscoveryCheck = 0;
+  private readonly discoveryFrames = new Map<
+    string,
+    { x: number; y: number; height: number }
+  >();
+  private readonly eventStarts = new Map<
+    string,
+    { time: number; distance: number }
+  >();
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly skyMaterial: THREE.ShaderMaterial;
@@ -174,6 +193,7 @@ export class WorldScene {
   private movingActors: MovingActor[] = [];
   private generator = new WorldGenerator(DEFAULT_ENVIRONMENT);
   private surface = new TerrainSurface(this.generator);
+  private terrainStream = new TerrainStream(this.surface);
   private chunkBuilder = new ChunkBuilder({
     settings: this.generator.settings,
     generator: this.generator,
@@ -237,6 +257,7 @@ export class WorldScene {
       side: THREE.BackSide,
       depthWrite: false,
       fog: false,
+      toneMapped: false,
       uniforms: {
         topColor: { value: new THREE.Color(0x6f9ead) },
         horizonColor: { value: new THREE.Color(0xc4d9d5) },
@@ -264,7 +285,7 @@ export class WorldScene {
         uniform float starIntensity;
         void main() {
           vec3 direction = normalize(vSkyPosition);
-          float heightMix = smoothstep(0.08, 0.72, direction.y * 0.5 + 0.5);
+          float heightMix = smoothstep(0.02, 0.72, direction.y);
           vec3 color = mix(horizonColor, topColor, heightMix);
           float alignment = max(dot(direction, celestialDirection), 0.0);
           float glow = pow(alignment, 44.0) * 0.22;
@@ -276,6 +297,7 @@ export class WorldScene {
             float stars = step(0.9968, starNoise) * smoothstep(-0.02, 0.34, direction.y);
             color += vec3(0.72, 0.86, 1.0) * stars * starIntensity;
           }
+          color = mix(horizonColor, color, smoothstep(0.0, 0.08, direction.y));
           gl_FragColor = vec4(color, 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
@@ -290,6 +312,7 @@ export class WorldScene {
     this.sky.renderOrder = -1_000;
     this.scene.add(this.sky);
     this.scene.add(this.worldRoot);
+    this.worldRoot.add(this.terrainStream.group);
     this.scene.add(this.sun, this.sun.target, this.hemi);
     this.createCyclist();
     this.scene.add(this.cyclist);
@@ -314,7 +337,9 @@ export class WorldScene {
     this.resize();
     if (new URLSearchParams(location.search).has("visualQa")) {
       window.__INFINIBIKE_VISUAL_QA__ = {
+        discoveries: () => this.discoveriesInView(),
         freeze: () => {
+          this.terrainStream.settle();
           this.idleDirty = true;
           this.visualQaFrozen = true;
           this.elapsed = 0;
@@ -332,8 +357,10 @@ export class WorldScene {
                 asset,
                 footprint,
                 height,
+                scenicDetail,
                 approachFeature,
               }) => ({
+                scenicDetail,
                 approachFeature,
                 architecture,
                 biome,
@@ -354,8 +381,12 @@ export class WorldScene {
         },
         setDistance: (distanceM) => this.setVisualQaDistance(distanceM),
         setGraphics: (preference) => this.setGraphicsPreference(preference),
-        setCamera: (mode) => {
-          this.setCameraSettings({ ...this.cameraSettings, mode });
+        setCamera: (mode, angle = this.cameraSettings.angle) => {
+          this.setCameraSettings({ ...this.cameraSettings, mode, angle });
+          this.setVisualQaDistance(this.rideDistanceM);
+        },
+        settleExpansion: () => {
+          this.terrainStream.settle();
           this.setVisualQaDistance(this.rideDistanceM);
         },
         findRegionDistance: (region) => this.findRegionDistance(region),
@@ -369,6 +400,16 @@ export class WorldScene {
           this.elapsed += Math.max(0, seconds);
           this.animateMovingScenery(Math.max(0, seconds));
           this.setVisualQaDistance(this.rideDistanceM);
+        },
+        lifeFrames: () => {
+          this.scene.updateMatrixWorld(true);
+          return this.lifeGroups().map((group) => ({
+            id: String(group.userData.monumentId),
+            kind: group.userData.life.kind,
+            visible: group.visible,
+            position: group.getWorldPosition(new THREE.Vector3()).toArray(),
+            head: group.getObjectByName("head")?.rotation.x ?? 0,
+          }));
         },
         monumentFrames: () => {
           this.scene.updateMatrixWorld(true);
@@ -425,12 +466,17 @@ export class WorldScene {
   }
 
   configure(settings: EnvironmentSettings): void {
+    this.eventStarts.clear();
     this.settings = {
       ...normalizeEnvironment(settings),
       seed: settings.seed.trim().toLowerCase() || "open-road",
     };
     this.generator = new WorldGenerator(this.settings);
+    this.worldRoot.remove(this.terrainStream.group);
+    this.terrainStream.dispose();
     this.surface = new TerrainSurface(this.generator);
+    this.terrainStream = new TerrainStream(this.surface);
+    this.worldRoot.add(this.terrainStream.group);
     this.chunkBuilder = new ChunkBuilder({
       settings: this.settings,
       generator: this.generator,
@@ -458,6 +504,8 @@ export class WorldScene {
     this.createWeather();
     this.createMovingScenery();
     this.ensureChunks(0);
+    // Initial scenery must never render above the temporary streaming cover.
+    this.terrainStream.settle();
     const start = this.generator.sample(0);
     this.camera.position.set(start.x + 7, start.elevationM + 5.5, 12);
     this.camera.lookAt(start.x, start.elevationM + 1.4, -12);
@@ -528,6 +576,7 @@ export class WorldScene {
       ({ descriptor }) => descriptor.landmark,
     ).length;
     return {
+      ...this.terrainStream.diagnostics(),
       chunkBuildMs: this.lastChunkBuildMs,
       renderCpuMs: this.renderCpuMs,
       renderedFrames: this.renderedFrames,
@@ -637,6 +686,7 @@ export class WorldScene {
     this.lastFrame = now;
     if (!this.visualQaFrozen && this.realtime) this.elapsed += dt;
     this.onFrame?.(dt);
+    if (this.terrainStream.advance(dt)) this.idleDirty = true;
     if ((!this.realtime || this.visualQaFrozen) && !this.idleDirty) return;
     this.idleDirty = false;
     const visualDt = this.visualQaFrozen || !this.realtime ? 0 : dt;
@@ -649,6 +699,7 @@ export class WorldScene {
     const renderStart = performance.now();
     this.renderer.render(this.scene, this.camera);
     this.renderedFrames++;
+    this.notifyDiscoveries();
     this.renderCpuMs = performance.now() - renderStart;
     this.trackPerformance(dt);
     window.__INFINIBIKE_DEBUG__ = this.getDiagnostics();
@@ -750,9 +801,7 @@ export class WorldScene {
         this.settings.time === "night" ? 0.08 : 0.04,
         this.settings.time === "night" ? -0.09 : -0.08,
       );
-    const horizonColor = fog
-      .clone()
-      .lerp(sky, this.settings.weather === "clear" ? 0.14 : 0.34);
+    const horizonColor = fog;
     (this.skyMaterial.uniforms.topColor!.value as THREE.Color).copy(topColor);
     (this.skyMaterial.uniforms.horizonColor!.value as THREE.Color).copy(
       horizonColor,
@@ -862,6 +911,9 @@ export class WorldScene {
     targetFog.lerp(REGION_FOG_TINTS.lakeside, region.lakeside * 0.16);
     targetFog.lerp(REGION_FOG_TINTS.highland, region.highland * 0.12);
     this.scene.fog.color.lerp(targetFog, 0.008);
+    (this.skyMaterial.uniforms.horizonColor!.value as THREE.Color).copy(
+      this.scene.fog.color,
+    );
   }
 
   private createWeather(): void {
@@ -1826,7 +1878,7 @@ export class WorldScene {
     const ahead = fogAwareAhead;
     const first = Math.max(0, current - 2);
     const last = current + ahead;
-    this.surface.prepare((last + 6) * CHUNK_LENGTH_M);
+    this.surface.prepare(distanceM + 6000);
     this.chunkBuilder.context.planner.retire(first, last);
     for (let index = first; index <= last; index += 1) {
       const detail: TerrainDetail = index <= current + 2 ? "near" : "far";
@@ -1853,6 +1905,18 @@ export class WorldScene {
       disposeObject(chunk.group);
       this.chunks.delete(index);
     }
+    this.terrainStream.update(
+      this.generator.sample(distanceM),
+      distanceM,
+      this.fogFarDistance(),
+      this.quality,
+      () =>
+        [...this.chunks.values()].flatMap(({ descriptor }) =>
+          this.chunkBuilder.context.planner
+            .plan(descriptor.index)
+            .map((item) => item.footprint),
+        ),
+    );
   }
 
   private fogFarDistance(): number {
@@ -1870,13 +1934,22 @@ export class WorldScene {
     const start = performance.now();
     const group = this.chunkBuilder.build(chunk, detail);
     const motion: MeadowMotionGroup[] = [];
+    const life: LifeGroup[] = [];
     group.traverse((object) => {
       if (isMeadowMotion(object)) motion.push(object);
+      if (isLifeGroup(object)) life.push(object);
     });
     group.userData.meadowMotionGroups = motion;
+    group.userData.lifeGroups = life;
     this.lastChunkBuildMs = performance.now() - start;
     setShadow(group, detail === "near" && QUALITY[this.quality].shadows);
     return group;
+  }
+
+  private lifeGroups(): LifeGroup[] {
+    return [...this.chunks.values()].flatMap(
+      (chunk) => (chunk.group.userData.lifeGroups ?? []) as LifeGroup[],
+    );
   }
 
   private monumentMotionGroups(): MeadowMotionGroup[] {
@@ -1887,6 +1960,48 @@ export class WorldScene {
   }
 
   private animateMonuments(): void {
+    for (const [id, event] of this.eventStarts)
+      if (Math.abs(event.distance - this.rideDistanceM) > 1500)
+        this.eventStarts.delete(id);
+    const life = this.lifeGroups().sort(
+      (a, b) =>
+        Math.abs(Number(a.userData.distanceM) - this.rideDistanceM) -
+          Math.abs(Number(b.userData.distanceM) - this.rideDistanceM) ||
+        String(a.userData.monumentId).localeCompare(
+          String(b.userData.monumentId),
+        ) ||
+        a.userData.life.ordinal - b.userData.life.ordinal,
+    );
+    const limit =
+      this.quality === "low" ? 6 : this.quality === "medium" ? 12 : 18;
+    life.forEach((group, index) => {
+      group.visible =
+        index < limit &&
+        Math.abs(Number(group.userData.distanceM) - this.rideDistanceM) < 350;
+      if (isSurrealEvent(group.userData.life.kind)) {
+        const id = String(group.userData.monumentId);
+        const distance = Number(group.userData.distanceM);
+        if (
+          group.visible &&
+          Math.abs(distance - this.rideDistanceM) < 120 &&
+          !this.eventStarts.has(id)
+        )
+          this.eventStarts.set(id, { time: this.elapsed, distance });
+        const start = this.eventStarts.get(id);
+        const age = start ? Math.max(0, this.elapsed - start.time) : -1;
+        group.visible = group.visible && age >= 0 && age < 60;
+        if (group.visible) {
+          const motionTime = this.cameraSettings.reducedMotion ? 25 : age;
+          updateLife(group, motionTime);
+          group.scale.setScalar(
+            this.cameraSettings.reducedMotion
+              ? 1
+              : Math.min(1, (age + 0.1) / 4, (60 - age) / 5),
+          );
+        }
+      } else if (group.visible)
+        updateLife(group, this.cameraSettings.reducedMotion ? 0 : this.elapsed);
+    });
     const groups = this.monumentMotionGroups().sort(
       (a, b) =>
         Math.abs(Number(a.userData.distanceM) - this.rideDistanceM) -
@@ -2342,6 +2457,7 @@ export class WorldScene {
     if (this.settings.landscape !== "city")
       this.applyRegionalGrading(sample.region);
     this.ensureChunks(this.rideDistanceM);
+    this.terrainStream.settle();
     this.updateCyclist(sample, this.cadenceRpm, this.speedKph);
     this.updateCamera(10);
     this.animateWeather(0);
@@ -2350,7 +2466,179 @@ export class WorldScene {
     this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
     this.renderedFrames++;
+    this.notifyDiscoveries();
     window.__INFINIBIKE_DEBUG__ = this.getDiagnostics();
+  }
+
+  private notifyDiscoveries(): void {
+    if (this.realtime && performance.now() - this.lastDiscoveryCheck > 1000) {
+      this.lastDiscoveryCheck = performance.now();
+      this.onDiscovery?.(this.discoveriesInView());
+    }
+  }
+
+  setDiscoveryHandler(handler: (encounters: Encounter[]) => void): void {
+    this.onDiscovery = handler;
+  }
+
+  captureDiscovery(id: string): string | undefined {
+    try {
+      const thumbnail = document.createElement("canvas");
+      thumbnail.width = 320;
+      thumbnail.height = 200;
+      const context = thumbnail.getContext("2d");
+      if (!context) return;
+      const frame = this.discoveryFrames.get(id);
+      const height = Math.min(
+        this.canvas.height,
+        this.canvas.width / 1.6,
+        Math.max(160, (frame?.height ?? 1) * this.canvas.height),
+      );
+      const width = height * 1.6;
+      const x = Math.max(
+        0,
+        Math.min(
+          this.canvas.width - width,
+          (frame?.x ?? 0.5) * this.canvas.width - width / 2,
+        ),
+      );
+      const y = Math.max(
+        0,
+        Math.min(
+          this.canvas.height - height,
+          (frame?.y ?? 0.5) * this.canvas.height - height / 2,
+        ),
+      );
+      context.drawImage(this.canvas, x, y, width, height, 0, 0, 320, 200);
+      return thumbnail.toDataURL("image/jpeg", 0.65);
+    } catch {
+      return;
+    }
+  }
+
+  /** Camera framing plus a terrain line-of-sight check; proximity alone never unlocks an entry. */
+  private discoveriesInView(): Encounter[] {
+    const found: Encounter[] = [];
+    this.discoveryFrames.clear();
+    const add = (
+      encounter: Encounter,
+      point: THREE.Vector3,
+      radius: number,
+    ) => {
+      if (found.some((item) => item.id === encounter.id)) return;
+      const screen = point.clone().project(this.camera);
+      this.discoveryFrames.set(encounter.id, {
+        x: (screen.x + 1) / 2,
+        y: (1 - screen.y) / 2,
+        height:
+          radius /
+          (Math.max(1, point.distanceTo(this.camera.position)) *
+            Math.tan((this.camera.fov * Math.PI) / 360)),
+      });
+      found.push(encounter);
+    };
+    const maxDistance = this.settings.weather === "rain" ? 100 : 160;
+    const visible = (
+      point: THREE.Vector3,
+      distance: number,
+      aircraft = false,
+    ): boolean => {
+      const relative = distance - this.rideDistanceM;
+      if (relative < -20 || relative > (aircraft ? 400 : maxDistance))
+        return false;
+      const screen = point.clone().project(this.camera);
+      if (
+        Math.abs(screen.x) > 0.92 ||
+        Math.abs(screen.y) > 0.92 ||
+        screen.z < -1 ||
+        screen.z > 1
+      )
+        return false;
+      if (!aircraft)
+        for (let step = 1; step < 9; step++) {
+          const p = this.camera.position.clone().lerp(point, step / 9);
+          if (
+            this.surface.sample(
+              p.x + this.originX,
+              p.z + this.originZ,
+              distance,
+            ).height >
+            p.y + this.originElevation - 0.15
+          )
+            return false;
+        }
+      return true;
+    };
+    const life = this.lifeGroups();
+    for (const chunk of this.chunks.values()) {
+      for (const item of this.chunkBuilder.context.planner.plan(
+        chunk.descriptor.index,
+      )) {
+        const id = item.architecture?.monumental
+          ? item.architecture.form
+          : item.scenicDetail;
+        if (
+          !id ||
+          !DISCOVERY_IDS.has(id) ||
+          !item.biome ||
+          (chunk.detail === "far" && item.category === "prop")
+        )
+          continue;
+        const actors = life.filter(
+          (group) => String(group.userData.monumentId) === item.id,
+        );
+        if (actors.length && !actors.some((group) => group.visible)) continue;
+        if (
+          isSurrealEvent(id) &&
+          !actors.some((group) => group.visible && group.scale.x > 0.4)
+        )
+          continue;
+        const point =
+          actors
+            .find((group) => group.visible)
+            ?.getWorldPosition(new THREE.Vector3()) ??
+          new THREE.Vector3(
+            item.footprint.x - this.originX,
+            item.support.baseY + item.height * 0.5 - this.originElevation,
+            item.footprint.z - this.originZ,
+          );
+        if (actors.length) point.y += 0.8;
+        if (visible(point, item.distanceM))
+          add(
+            { id, biome: item.biome, distanceM: item.distanceM },
+            point,
+            item.architecture?.monumental
+              ? Math.max(
+                  item.height * 0.8,
+                  item.footprint.halfAcross,
+                  item.footprint.halfAlong,
+                ) * 1.3
+              : 8,
+          );
+      }
+    }
+    for (const actor of this.movingActors) {
+      if (!actor.object.visible || !DISCOVERY_IDS.has(actor.kind)) continue;
+      const point = actor.object.getWorldPosition(new THREE.Vector3());
+      point.y += 0.6;
+      if (
+        visible(
+          point,
+          actor.routeDistanceM,
+          actor.kind === "plane" || actor.kind === "helicopter",
+        )
+      )
+        add(
+          {
+            id: actor.kind,
+            biome: biomeAt(this.settings, actor.routeDistanceM, "journal"),
+            distanceM: actor.routeDistanceM,
+          },
+          point,
+          actor.kind === "plane" || actor.kind === "helicopter" ? 16 : 8,
+        );
+    }
+    return found;
   }
 
   private findRegionDistance(region: keyof RegionWeights): number {
@@ -2466,8 +2754,10 @@ declare global {
   interface Window {
     __INFINIBIKE_DEBUG__?: Record<string, number | string>;
     __INFINIBIKE_VISUAL_QA__?: {
+      discoveries: () => Encounter[];
       freeze: () => void;
       scenery: (index: number) => {
+        scenicDetail?: import("./scenic-detail").ScenicDetail;
         approachFeature?: import("./scenery-planner").SceneryDescriptor["approachFeature"];
         biome?: BiomeId;
         architecture?: import("./architecture-generator").ArchitecturePlan;
@@ -2485,7 +2775,8 @@ declare global {
       renderedCityMonuments: () => string[];
       setDistance: (distanceM: number) => void;
       setGraphics: (preference: GraphicsPreference) => void;
-      setCamera: (mode: CameraMode) => void;
+      setCamera: (mode: CameraMode, angle?: CameraAngle) => void;
+      settleExpansion: () => void;
       findRegionDistance: (region: keyof RegionWeights) => number;
       findCityTurnDistance: (
         afterM?: number,
@@ -2500,6 +2791,13 @@ declare global {
       ) => number;
       findMovingActor: (kind: MovingActorKind) => number;
       advanceActors: (seconds: number) => void;
+      lifeFrames: () => {
+        id: string;
+        kind: string;
+        visible: boolean;
+        position: number[];
+        head: number;
+      }[];
       monumentFrames: () => {
         id: string;
         kind: string;

@@ -1011,3 +1011,61 @@ select:focus {
 .biome-row select {
   width: 100%;
 }
+
+.journal-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 1rem;
+  margin-block: 1.5rem;
+}
+.journal-filters label {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  overflow-wrap: normal;
+}
+.journal-filters label.journal-toggle {
+  display: flex;
+  align-items: center;
+}
+.journal-toggle input[type="checkbox"] {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0;
+  margin: 0;
+}
+.journal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 1rem;
+  margin-block: 1.5rem;
+}
+.discovery-card {
+  padding: 1rem;
+  border: 1px solid #72857766;
+  border-radius: 1rem;
+  min-width: 0;
+}
+.discovery-card h2 {
+  font-size: 1.2rem;
+}
+.discovery-card img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  margin-block: 0.75rem;
+}
+.journal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.discovery-content {
+  width: min(100%, 72rem);
+  background: rgba(18, 29, 29, 0.94);
+  overflow-wrap: anywhere;
+}

@@ -23,19 +23,13 @@ export class ChunkBuilder {
   ): THREE.Group {
     const group = new THREE.Group();
     group.name = `chunk-${chunk.index}`;
-    group.add(
-      this.context.surface.build(chunk),
-      this.road.buildRoad(chunk),
-      this.road.buildRoadMarkings(chunk),
-    );
+    group.add(this.road.buildRoad(chunk), this.road.buildRoadMarkings(chunk));
     if (this.context.settings.landscape === "city")
       group.add(
         this.city.buildCity(chunk, detail),
         this.road.buildBikeLanes(chunk),
       );
     else {
-      const water = this.country.buildWater(chunk);
-      if (water) group.add(water);
       group.add(this.road.buildCountrysideRouteEvents(chunk));
       group.add(
         renderScenery(

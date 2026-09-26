@@ -1,3 +1,4 @@
+import { buildScenicDetail } from "./scenic-detail-renderer";
 import {
   DISTRICT_MONUMENT_FORMS,
   DISTRICT_MONUMENT_PALETTES,
@@ -188,6 +189,7 @@ export class BiomeScenery {
     descriptor: PlacedScenery,
     simplified: boolean,
   ): boolean {
+    if (buildScenicDetail(group, descriptor, this.part.bind(this))) return true;
     const { biome, category, height: h } = descriptor;
     const building = category === "building";
     const w =

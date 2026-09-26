@@ -1,6 +1,8 @@
 import { BIOME_CATALOG, biomeBlendAt } from "../domain/biomes";
 import * as THREE from "three";
 import { hashString } from "../domain/random";
+import { createNoise2D } from "simplex-noise";
+import { seededRandom } from "../domain/random";
 import { forkPath } from "./route-geometry";
 import {
   RouteSpatialIndex,
@@ -31,6 +33,7 @@ export type SurfaceSample = {
  * Placement uses the same triangle diagonal and vertices as the mesh.
  */
 export class TerrainSurface {
+  private readonly landscapeNoise;
   private indexedThrough = -ROUTE_STEP_M;
   private readonly routePoints: IndexedRoadSample[] = [];
   private readonly mainRoadSamples = new Map<number, RoadSample>();
@@ -41,7 +44,40 @@ export class TerrainSurface {
     string,
     { road: RoadSample; offset: number; separation: number }
   >();
-  constructor(readonly generator: WorldGenerator) {}
+  constructor(readonly generator: WorldGenerator) {
+    this.landscapeNoise = createNoise2D(
+      seededRandom(hashString(`${generator.settings.seed}:landscape`)),
+    );
+  }
+
+  /** Keep the placement surface intact; only the unoccupied outer landscape
+   * transitions to broad world-coordinate relief. */
+  landscapeHeight(x: number, z: number): number {
+    const nearest = this.nearest(x, z);
+    const radius = this.generator.settings.landscape === "city" ? 700 : 220;
+    const blend = THREE.MathUtils.smoothstep(
+      nearest.separation,
+      radius,
+      radius + 100,
+    );
+    const near = this.vertexHeight(x, z);
+    if (blend === 0) return near;
+    const amplitude =
+      this.generator.settings.landscape === "city"
+        ? 12
+        : this.generator.settings.terrain === "rugged"
+          ? 95
+          : 45;
+    const broad =
+      this.landscapeNoise(x / 950, z / 950) * amplitude +
+      this.landscapeNoise(x / 330, z / 330) * amplitude * 0.18;
+    return THREE.MathUtils.lerp(near, broad, blend);
+  }
+
+  clearRenderCaches(): void {
+    this.heights.clear();
+    this.projections.clear();
+  }
   private get radiusM(): number {
     // City turn arms can extend 650m beyond the ridden route.
     return this.generator.settings.landscape === "city"
@@ -218,6 +254,54 @@ export class TerrainSurface {
     });
   }
 
+  colorAt(x: number, z: number): THREE.Color {
+    const { road, offset } = this.nearest(x, z);
+    const region = road.region;
+    const color =
+      this.generator.settings.landscape === "city"
+        ? new THREE.Color(0x66716d)
+        : new THREE.Color(0x75905c)
+            .lerp(new THREE.Color(0x365c49), region.woodland * 0.65)
+            .lerp(new THREE.Color(0x65747b), region.highland * 0.55)
+            .lerp(new THREE.Color(0x87a26a), region.meadow * 0.2);
+    if (this.generator.settings.biomeGenerationVersion === 2) {
+      const tint = new THREE.Color(0);
+      for (const entry of biomeBlendAt(this.generator.settings, road.distanceM))
+        tint.add(
+          new THREE.Color(BIOME_CATALOG[entry.id].color).multiplyScalar(
+            entry.weight,
+          ),
+        );
+      color.lerp(
+        tint,
+        this.generator.settings.landscape === "city" ? 0.2 : 0.75,
+      );
+    }
+    color.offsetHSL(0, 0, Math.sin(x * 0.018 + z * 0.009) * 0.012);
+    if (this.generator.settings.landscape === "countryside") {
+      const field = Math.floor(road.distanceM / 200);
+      const roll = hashString(`${this.generator.settings.seed}:field:${field}`);
+      const fieldSide = roll % 2 ? 1 : -1;
+      const local = road.distanceM - field * 200;
+      const edge = Math.min(
+        local - 20,
+        180 - local,
+        offset * fieldSide - 35,
+        125 - offset * fieldSide,
+      );
+      const blend =
+        THREE.MathUtils.smoothstep(edge, 0, 12) *
+        Math.max(0, (region.meadow - 0.25) * 1.3);
+      color.lerp(
+        new THREE.Color(
+          roll % 3 === 0 ? 0xb59a4d : roll % 3 === 1 ? 0x6f8c45 : 0x8c7f43,
+        ),
+        blend,
+      );
+    }
+    return color;
+  }
+
   build(chunk: WorldChunkDescriptor): THREE.Mesh {
     const positions: number[] = [],
       normals: number[] = [],
@@ -237,59 +321,7 @@ export class TerrainSurface {
             this.vertexHeight(x, z - 5) - this.vertexHeight(x, z + 5),
           ).normalize();
           normals.push(normal.x, normal.y, normal.z);
-          const { road, offset } = this.nearest(x, z);
-          const region = road.region;
-          const color =
-            this.generator.settings.landscape === "city"
-              ? new THREE.Color(0x66716d)
-              : new THREE.Color(0x75905c)
-                  .lerp(new THREE.Color(0x365c49), region.woodland * 0.65)
-                  .lerp(new THREE.Color(0x65747b), region.highland * 0.55)
-                  .lerp(new THREE.Color(0x87a26a), region.meadow * 0.2);
-          if (this.generator.settings.biomeGenerationVersion === 2) {
-            const tint = new THREE.Color(0);
-            for (const entry of biomeBlendAt(
-              this.generator.settings,
-              road.distanceM,
-            ))
-              tint.add(
-                new THREE.Color(BIOME_CATALOG[entry.id].color).multiplyScalar(
-                  entry.weight,
-                ),
-              );
-            color.lerp(
-              tint,
-              this.generator.settings.landscape === "city" ? 0.2 : 0.75,
-            );
-          }
-          color.offsetHSL(0, 0, Math.sin(x * 0.018 + z * 0.009) * 0.012);
-          if (this.generator.settings.landscape === "countryside") {
-            const field = Math.floor(road.distanceM / 200);
-            const roll = hashString(
-              `${this.generator.settings.seed}:field:${field}`,
-            );
-            const fieldSide = roll % 2 ? 1 : -1;
-            const local = road.distanceM - field * 200;
-            const edge = Math.min(
-              local - 20,
-              180 - local,
-              offset * fieldSide - 35,
-              125 - offset * fieldSide,
-            );
-            const blend =
-              THREE.MathUtils.smoothstep(edge, 0, 12) *
-              Math.max(0, (region.meadow - 0.25) * 1.3);
-            color.lerp(
-              new THREE.Color(
-                roll % 3 === 0
-                  ? 0xb59a4d
-                  : roll % 3 === 1
-                    ? 0x6f8c45
-                    : 0x8c7f43,
-              ),
-              blend,
-            );
-          }
+          const color = this.colorAt(x, z);
           colors.push(color.r, color.g, color.b);
         }
       for (let row = 0; row < n; row++)
@@ -321,7 +353,7 @@ export class TerrainSurface {
     return mesh;
   }
 
-  private waterVertex(x: number, z: number) {
+  waterVertex(x: number, z: number) {
     const side =
       hashString(`${this.generator.settings.seed}:water-side`) % 2 ? 1 : -1;
     const { road, offset } = this.nearest(x, z);
@@ -359,6 +391,12 @@ export class TerrainSurface {
   }
 
   buildWater(chunk: WorldChunkDescriptor): THREE.Mesh | undefined {
+    return this.buildWaterTiles(this.tilesForChunk(chunk));
+  }
+
+  buildWaterTiles(
+    tiles: readonly (readonly [number, number])[],
+  ): THREE.Mesh | undefined {
     const positions: number[] = [];
     type WetVertex = ReturnType<TerrainSurface["waterVertex"]>;
     const triangle = (input: WetVertex[]) => {
@@ -383,7 +421,7 @@ export class TerrainSurface {
         for (const p of [clipped[0]!, clipped[i]!, clipped[i + 1]!])
           positions.push(p.x, p.y + 0.015, p.z);
     };
-    for (const [tx, tz] of this.tilesForChunk(chunk))
+    for (const [tx, tz] of tiles)
       for (let row = 0; row < 10; row++)
         for (let col = 0; col < 10; col++) {
           const x = tx * TERRAIN_TILE_M + col * TERRAIN_STEP_M,

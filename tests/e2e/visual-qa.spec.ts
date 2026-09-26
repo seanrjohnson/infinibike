@@ -203,20 +203,20 @@ test("captures moving countryside wildlife", async ({ page }, testInfo) => {
   await page.locator("#graphics").selectOption("high");
   await page.getByRole("button", { name: "Start ride" }).click();
   await page.getByRole("button", { name: "Pause ride" }).click();
-  const dinosaurDistance = await page.evaluate(() =>
-    window.__INFINIBIKE_VISUAL_QA__!.findMovingActor("dinosaur"),
+  const wildlifeDistance = await page.evaluate(() =>
+    window.__INFINIBIKE_VISUAL_QA__!.findMovingActor("cow"),
   );
-  expect(dinosaurDistance).toBeGreaterThan(0);
+  expect(wildlifeDistance).toBeGreaterThan(0);
   await page.evaluate(
     (distance) => window.__INFINIBIKE_VISUAL_QA__!.setDistance(distance),
-    dinosaurDistance - 45,
+    wildlifeDistance - 45,
   );
   await expect
     .poll(
       async () =>
         (await page.evaluate(() => window.__INFINIBIKE_DEBUG__))?.distanceM,
     )
-    .toBe(dinosaurDistance - 45);
+    .toBe(wildlifeDistance - 45);
   await page.locator(".modal-layer").evaluate((element) => {
     (element as HTMLElement).style.display = "none";
   });

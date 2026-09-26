@@ -9,6 +9,7 @@ import type { RideSnapshot } from "./ride-model";
 import type { RideDataPoint } from "./ride-analytics";
 
 export type RideSummary = {
+  discoveries?: string[];
   preferences?: RidePreferences;
   id: string;
   startedAt: string;
@@ -42,6 +43,11 @@ export function validateRideHistory(value: unknown): RideSummary[] {
     return [
       {
         ...ride,
+        discoveries: Array.isArray(ride.discoveries)
+          ? ride.discoveries
+              .filter((id): id is string => typeof id === "string")
+              .slice(0, 300)
+          : [],
         rideMode: normalizeRideMode(ride.rideMode ?? DEFAULT_RIDE_MODE),
         goalCompleted: ride.goalCompleted === true,
         ftpW: typeof ride.ftpW === "number" ? ride.ftpW : 220,
