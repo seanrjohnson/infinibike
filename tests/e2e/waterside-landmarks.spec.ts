@@ -20,7 +20,7 @@ test.use({
 });
 
 for (const biome of Object.keys(DECKS) as (keyof typeof DECKS)[]) {
-  for (const mobile of [true]) {
+  for (const mobile of biome === "ancient-way" ? [false, true] : [true]) {
     test(
       "shows " +
         biome +
@@ -160,6 +160,18 @@ for (const biome of Object.keys(DECKS) as (keyof typeof DECKS)[]) {
                 Math.floor(distance / 250),
               ),
             ).toContainEqual(monument);
+            if (!mobile && form === "ceremonial-road-arch") {
+              for (const approach of [350, 100]) {
+                await page.evaluate((distance) => {
+                  window.__INFINIBIKE_VISUAL_QA__!.setDistance(distance);
+                }, distance - approach);
+                await page.screenshot({
+                  path: testInfo.outputPath(
+                    `${form}-${quality}-${approach}m.png`,
+                  ),
+                });
+              }
+            }
           }
           if (isCrossing(form)) {
             for (const mode of ["close", "wide", "handlebar"] as const)

@@ -331,7 +331,7 @@ export function architectureParts(plan: ArchitecturePlan): ArchitecturePart[] {
     d: number,
   ) => add("pediment", [w, h, d], [x, y, z], "roof");
   const garden = (x: number, y: number, z: number, w = 0.17) => {
-    box(x, y, z, w, 0.025, 0.15, "trim", "accent");
+    box(x, y, z, w, 0.025, 0.17, "trim", "accent");
     add("sphere", [w * 0.9, 0.06, 0.13], [x, y + 0.025, z], "plant", "accent");
   };
   const windows = (
@@ -525,7 +525,8 @@ export function architectureParts(plan: ArchitecturePlan): ArchitecturePart[] {
       for (const side of [-1, 1]) box(side * 0.36, 0.47, 0, 0.14, 0.88, 0.68);
       for (let tier = 0; tier < plan.tiers; tier++) {
         const y = 0.28 + (tier * 0.62) / plan.tiers;
-        box(0, y, 0, 0.86, 0.055, 0.73, "trim");
+        // Project beyond the pillars' outer faces (±0.43), avoiding z-fighting.
+        box(0, y, 0, 0.9, 0.055, 0.73, "trim");
         if (tier % 2 === 0) box(-0.16, y + 0.09, 0, 0.23, 0.14, 0.59);
         else box(0.16, y + 0.09, 0.08, 0.23, 0.14, 0.43);
       }
@@ -613,9 +614,9 @@ export function architectureParts(plan: ArchitecturePlan): ArchitecturePart[] {
             Math.cos(angle) * radius,
             0.06 + tier * 0.055,
             Math.sin(angle) * radius - 0.11,
-            0.095,
+            tier % 2 ? 0.105 : 0.095,
             0.09,
-            0.095,
+            tier % 2 ? 0.105 : 0.095,
             tier % 2 ? "trim" : "wall",
           );
         }
@@ -647,7 +648,7 @@ export function architectureParts(plan: ArchitecturePlan): ArchitecturePart[] {
             0.13,
             0.045,
             0.07,
-            0.32,
+            0.34,
             "trim",
           );
       }

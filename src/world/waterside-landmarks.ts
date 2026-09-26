@@ -288,10 +288,14 @@ export function watersideLandmarkParts(
   } else if (plan.form === "ceremonial-road-arch") {
     // Everything above the central corridor starts at .50 * height (>= 15m).
     for (const side of [-1, 1]) {
-      box(side * 0.34, 0.33, 0, 0.22, 0.66, 0.7);
+      // Piers overlap the lintel's underside at .775 rather than stopping at .66.
+      box(side * 0.34, 0.4, 0, 0.22, 0.8, 0.7);
       for (const z of [-0.37, 0.37]) {
-        column(side * 0.35, 0, z, 0.045, 0.66, "trim");
-        box(side * 0.34, 0.39, z, 0.12, 0.17, 0.018, "roof");
+        column(side * 0.34, 0, z, 0.045, 0.8, "trim");
+        // Separate relief panels flank the column; overlapping faces shimmer
+        // at distance even when the intersection looks clean close up.
+        for (const offset of [-0.065, 0.065])
+          box(side * 0.34 + offset, 0.39, z, 0.05, 0.17, 0.018, "roof");
       }
       box(side * 0.34, 0.055, 0, 0.25, 0.11, 0.78, "trim");
     }

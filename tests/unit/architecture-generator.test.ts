@@ -29,6 +29,55 @@ const examples = [
   "meadow",
 ] as const;
 describe("procedural architecture", () => {
+  it("keeps exposed trim faces clear of overlapping wall faces", () => {
+    for (const form of new Set(Object.values(ARCHITECTURE_FORMS).flat())) {
+      for (const tiers of [2, 3, 4]) {
+        const parts = architectureParts({
+          ...planArchitecture("trim-clearance", "brutalist-gardens", 125, 1, 0),
+          form,
+          tiers,
+        });
+        const trims = parts.filter(
+          (p) => p.shape === "box" && p.material === "trim",
+        );
+        const walls = parts.filter(
+          (p) => p.shape === "box" && p.material === "wall",
+        );
+        for (const trim of trims)
+          for (const wall of walls) {
+            for (const axis of [0, 2])
+              for (const side of [-1, 1]) {
+                const overlap = [0, 1, 2]
+                  .filter((i) => i !== axis)
+                  .every(
+                    (i) =>
+                      Math.min(
+                        trim.at[i]! + trim.size[i]! / 2,
+                        wall.at[i]! + wall.size[i]! / 2,
+                      ) -
+                        Math.max(
+                          trim.at[i]! - trim.size[i]! / 2,
+                          wall.at[i]! - wall.size[i]! / 2,
+                        ) >
+                      1e-6,
+                  );
+                if (!overlap) continue;
+                const separation = Math.abs(
+                  trim.at[axis]! +
+                    (side * trim.size[axis]!) / 2 -
+                    wall.at[axis]! -
+                    (side * wall.size[axis]!) / 2,
+                );
+                expect(
+                  separation,
+                  `${form}: overlapping faces on axis ${axis}`,
+                ).toBeGreaterThan(1e-6);
+              }
+          }
+      }
+    }
+  });
+
   it("supports every aqueduct column through all four storeys", () => {
     const plan = {
       ...planArchitecture("supports", "arcaded-city", 125, 1, 0),

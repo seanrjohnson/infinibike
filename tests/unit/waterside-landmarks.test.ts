@@ -43,6 +43,33 @@ const environmentFor = (biome: BiomeId) =>
   });
 
 describe("waterside and crossing monuments", () => {
+  it("supports the ceremonial lintel and separates pillar relief from its columns", () => {
+    const plan = planMonument(
+      planArchitecture("arch-support", "ancient-way", 125, 1, 0),
+      "ceremonial-road-arch",
+    );
+    const parts = architectureParts(plan);
+    const lintel = parts.find((p) => p.material === "wall" && p.at[0] === 0)!;
+    const piers = parts.filter((p) => p.material === "wall" && p.at[0] !== 0);
+    expect(piers).toHaveLength(2);
+    for (const pier of piers) {
+      expect(pier.at[1] + pier.size[1] / 2).toBeGreaterThan(
+        lintel.at[1] - lintel.size[1] / 2,
+      );
+      expect(Math.abs(pier.at[0]) - pier.size[0] / 2).toBeGreaterThan(0.22);
+    }
+    const columns = parts.filter((p) => p.shape === "column");
+    const panels = parts.filter((p) => p.material === "roof" && p.at[1] < 0.5);
+    expect(panels).toHaveLength(8);
+    for (const panel of panels)
+      for (const column of columns) {
+        expect(
+          Math.abs(panel.at[0] - column.at[0]) -
+            (panel.size[0] + column.size[0]) / 2,
+        ).toBeGreaterThan(0.01);
+      }
+  });
+
   it.each(MONUMENT_FORMS)(
     "keeps %s recognizable and inside its complete parcel at every detail",
     (form) => {
