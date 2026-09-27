@@ -430,12 +430,27 @@ export class BiomeScenery {
         );
       } else {
         const fallen = hashString(descriptor.id) % 2 === 0;
+        const diameter = w * 0.45;
         const ruin = column(
-          [w * 0.45, fallen ? w * 0.75 : h * 1.5, d * 0.45],
-          [0, h * 0.5, 0],
+          [diameter, fallen ? w * 0.75 : h * 1.5, d * 0.45],
+          [0, fallen ? diameter * 0.45 : h * 0.75, 0],
           stone,
         );
-        if (fallen) ruin.rotation.z = Math.PI / 2;
+        if (fallen) {
+          ruin.rotation.z =
+            Math.PI / 2 +
+            ((hashString(descriptor.id + ":lean") % 9) - 4) * 0.025;
+          ruin.rotation.y =
+            ((hashString(descriptor.id + ":turn") % 9) - 4) * 0.08;
+          for (const side of [-1, 1])
+            this.part(
+              group,
+              "box",
+              [diameter * 0.65, diameter * 0.28, diameter * 0.8],
+              [side * w * 0.27, diameter * 0.1, side * d * 0.12],
+              0xb3a58c,
+            );
+        }
       }
       return true;
     }

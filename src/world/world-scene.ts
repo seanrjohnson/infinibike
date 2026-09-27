@@ -31,7 +31,11 @@ import { DEFAULT_ENVIRONMENT } from "../domain/environment";
 import { hashString, seededRandom } from "../domain/random";
 import type { RideSnapshot } from "../domain/ride-model";
 import { AssetLibrary, type AssetKey } from "./asset-library";
-import { disposeObject, markNoShadows } from "./render-resources";
+import {
+  disposeObject,
+  enableDistanceShadowFade,
+  markNoShadows,
+} from "./render-resources";
 import { SceneryPlanner } from "./scenery-planner";
 import {
   CHUNK_LENGTH_M,
@@ -99,6 +103,10 @@ type MovingActor = {
   phase: number;
   elevated?: "ground" | "powerline";
   flockBehavior?: "cohere" | "disperse";
+  alertDistanceM?: number;
+  roamRadiusM?: number;
+  roamAcrossM?: number;
+  headingBias?: number;
 };
 type CloudSpec = {
   distanceM: number;
@@ -144,10 +152,12 @@ function setShadow(root: THREE.Object3D, enabled: boolean): void {
     if (mesh.userData.receiveOnly === true) {
       mesh.castShadow = false;
       mesh.receiveShadow = enabled;
+      if (enabled) enableDistanceShadowFade(mesh);
       return;
     }
     mesh.castShadow = enabled;
     mesh.receiveShadow = enabled;
+    if (enabled) enableDistanceShadowFade(mesh);
   });
 }
 
@@ -848,10 +858,10 @@ export class WorldScene {
     this.sun.shadow.radius = 2;
     this.sun.shadow.bias = -0.00012;
     this.sun.shadow.normalBias = 0.035;
-    this.sun.shadow.camera.left = -50;
-    this.sun.shadow.camera.right = 50;
-    this.sun.shadow.camera.top = 50;
-    this.sun.shadow.camera.bottom = -50;
+    this.sun.shadow.camera.left = -90;
+    this.sun.shadow.camera.right = 90;
+    this.sun.shadow.camera.top = 90;
+    this.sun.shadow.camera.bottom = -90;
     this.sun.shadow.camera.far = 320;
     this.hemi.color.setHex(
       this.settings.time === "night" ? 0x6685a0 : 0xdcecf0,
@@ -1116,6 +1126,31 @@ export class WorldScene {
         phase,
         elevated,
         flockBehavior,
+        alertDistanceM:
+          kind === "takeoff-flock" ? 95 + random() * 85 : undefined,
+        roamRadiusM: ![
+          "car",
+          "pedestrian",
+          "cyclist",
+          "sky-birds",
+          "takeoff-flock",
+          "plane",
+          "helicopter",
+        ].includes(kind)
+          ? 8 + random() * 16
+          : undefined,
+        roamAcrossM: ![
+          "car",
+          "pedestrian",
+          "cyclist",
+          "sky-birds",
+          "takeoff-flock",
+          "plane",
+          "helicopter",
+        ].includes(kind)
+          ? 2 + random() * 6
+          : undefined,
+        headingBias: (random() - 0.5) * 0.9,
       });
     };
 
@@ -1157,12 +1192,12 @@ export class WorldScene {
       const species: MovingActorKind[] =
         this.settings.landscape === "dreamscape"
           ? []
-          : ["cow", "sheep", "sheep", "raccoon"];
+          : ["cow", "sheep", "sheep", "raccoon", "cow", "sheep", "raccoon"];
       species.forEach((kind, index) => {
         add(
           kind,
           180 + index * 310 + random() * 180,
-          1_750 + random() * 900,
+          1_100 + random() * 750,
           random() < 0.5 ? -1 : 1,
           0.3 + random() * 0.55,
           random() < 0.5 ? -1 : 1,
@@ -1257,7 +1292,12 @@ export class WorldScene {
     random: () => number,
   ): THREE.Group {
     if (kind === "sky-birds" || kind === "takeoff-flock")
-      return this.createBirdFlock(kind === "sky-birds" ? 7 : 11, random);
+      return this.createBirdFlock(
+        kind === "sky-birds"
+          ? 4 + Math.floor(random() * 10)
+          : 6 + Math.floor(random() * 13),
+        random,
+      );
     if (kind === "cyclist")
       return createCityCyclist(
         [0xb66b4e, 0x447f9b, 0xa08d45][Math.floor(random() * 3)]!,
@@ -1484,17 +1524,35 @@ export class WorldScene {
 
   private createBirdFlock(count: number, random: () => number): THREE.Group {
     const group = new THREE.Group();
+    const formation = Math.floor(random() * 4);
     const material = new THREE.MeshBasicMaterial({
       color: 0x263331,
       side: THREE.DoubleSide,
     });
     for (let index = 0; index < count; index += 1) {
       const bird = new THREE.Group();
-      bird.position.set(
-        ((index % 4) - 1.5) * 1.6,
-        (index % 3) * 0.55,
-        Math.floor(index / 4) * 1.7,
-      );
+      const rank = Math.ceil(index / 2);
+      const side = index % 2 ? 1 : -1;
+      if (formation === 0)
+        bird.position.set(side * rank * 1.25, (index % 3) * 0.28, rank * 1.35);
+      else if (formation === 1)
+        bird.position.set(
+          index * 1.05 - count * 0.5,
+          (index % 3) * 0.38,
+          index * 0.72,
+        );
+      else if (formation === 2)
+        bird.position.set(
+          ((index % 5) - 2) * 1.45 + (random() - 0.5) * 0.5,
+          (index % 4) * 0.36 + random() * 0.25,
+          Math.floor(index / 5) * 1.6 + (random() - 0.5) * 0.6,
+        );
+      else
+        bird.position.set(
+          (index - count / 2) * 1.15,
+          Math.sin(index * 1.4) * 0.65,
+          Math.cos(index * 0.85) * 1.4,
+        );
       bird.userData.restPosition = bird.position.clone();
       bird.userData.departureAcross = (random() - 0.5) * 2;
       bird.userData.departureAlong = (random() - 0.5) * 2;
@@ -1649,10 +1707,11 @@ export class WorldScene {
       return;
     }
     const flying = actor.kind === "sky-birds";
+    const roamRate = actor.speedMps * 0.22;
     const travel = flying
       ? Math.sin(this.elapsed * 0.22 + actor.phase) * 85
-      : Math.sin(this.elapsed * actor.speedMps * 0.22 + actor.phase) *
-        (requiredBiome ? 3 : 9);
+      : Math.sin(this.elapsed * roamRate + actor.phase) *
+        (requiredBiome ? 5 : (actor.roamRadiusM ?? 12));
     const road = this.generator.sample(
       Math.max(0, actor.routeDistanceM + travel),
     );
@@ -1664,8 +1723,14 @@ export class WorldScene {
           : actor.kind === "raccoon"
             ? 10.5
             : 19;
+    const lateralWander = flying
+      ? 0
+      : Math.sin(this.elapsed * roamRate * 0.73 + actor.phase * 1.7) *
+        (actor.roamAcrossM ?? 3);
     const offset =
-      actor.side * (baseOffset + Number(actor.object.userData.herdOffset ?? 0));
+      actor.side *
+        (baseOffset + Number(actor.object.userData.herdOffset ?? 0)) +
+      lateralWander;
     const ground = this.terrainElevationAt(road, offset);
     const altitude = flying
       ? 16 + Math.sin(this.elapsed * 0.7 + actor.phase) * 2.5
@@ -1705,8 +1770,22 @@ export class WorldScene {
         head.rotation.x =
           0.2 + Math.sin(this.elapsed * 0.7 + actor.phase) * 0.25;
     }
+    const alongVelocity = flying
+      ? 1
+      : Math.cos(this.elapsed * roamRate + actor.phase) *
+        (requiredBiome ? 5 : (actor.roamRadiusM ?? 12)) *
+        roamRate;
+    const acrossVelocity = flying
+      ? 0
+      : Math.cos(this.elapsed * roamRate * 0.73 + actor.phase * 1.7) *
+        (actor.roamAcrossM ?? 3) *
+        roamRate *
+        0.73;
     actor.object.rotation.y =
-      -road.heading + (actor.direction < 0 ? Math.PI : 0);
+      -road.heading +
+      (alongVelocity < 0 ? Math.PI : 0) +
+      Math.atan2(acrossVelocity, Math.max(0.05, Math.abs(alongVelocity))) +
+      (actor.headingBias ?? 0) * 0.35;
     if (flying) {
       this.animateBirdWings(actor.object, 7.5, actor.phase);
     } else {
@@ -1721,7 +1800,13 @@ export class WorldScene {
   ): void {
     actor.object.visible = relativeDistance > -150 && relativeDistance < 620;
     if (!actor.object.visible) return;
-    const takeoff = THREE.MathUtils.smoothstep(-relativeDistance, -55, 80);
+    const takeoff =
+      1 -
+      THREE.MathUtils.smoothstep(
+        relativeDistance,
+        10,
+        actor.alertDistanceM ?? 110,
+      );
     const road = this.generator.sample(
       Math.max(0, actor.routeDistanceM + takeoff * 75),
     );

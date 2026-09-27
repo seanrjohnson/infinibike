@@ -26,6 +26,7 @@ import { WorldGenerator } from "../../src/world/world-generator";
 import { TerrainSurface } from "../../src/world/terrain-surface";
 import { normalizeEnvironment } from "../../src/domain/environment";
 import { biomesFor, type BiomeId } from "../../src/domain/biomes";
+import { hashString } from "../../src/domain/random";
 
 const environmentFor = (biome: BiomeId) =>
   normalizeEnvironment({
@@ -43,6 +44,48 @@ const environmentFor = (biome: BiomeId) =>
   });
 
 describe("waterside and crossing monuments", () => {
+  it("rests fallen ancient columns on the ground after rotating them", () => {
+    let id = "fallen-column:0";
+    while (hashString(id) % 2 !== 0) id += ":next";
+    const descriptor: PlacedScenery = {
+      id,
+      biome: "ancient-way",
+      owner: 0,
+      distanceM: 50,
+      asset: "rock_cluster",
+      category: "prop",
+      height: 1.4,
+      color: 0xffffff,
+      footprint: {
+        x: 0,
+        z: 0,
+        heading: 0,
+        halfAlong: 1.5,
+        halfAcross: 1.5,
+      },
+      priority: 0,
+      policy: "embedded",
+      rotationY: 0,
+      support: {
+        baseY: 0,
+        bottomY: -0.15,
+        normal: new THREE.Vector3(0, 1, 0),
+      },
+    };
+    const group = new THREE.Group();
+    new BiomeScenery().build(group, descriptor, false);
+    const column = group.children.find(
+      (child) =>
+        child instanceof THREE.Mesh &&
+        child.geometry instanceof THREE.CylinderGeometry,
+    )!;
+    const bounds = new THREE.Box3().setFromObject(column);
+    expect(bounds.min.y).toBeLessThanOrEqual(0.08);
+    expect(bounds.min.y).toBeGreaterThan(-0.2);
+    expect(bounds.max.y).toBeGreaterThan(0.3);
+    disposeObject(group);
+  });
+
   it("supports the ceremonial lintel and separates pillar relief from its columns", () => {
     const plan = planMonument(
       planArchitecture("arch-support", "ancient-way", 125, 1, 0),

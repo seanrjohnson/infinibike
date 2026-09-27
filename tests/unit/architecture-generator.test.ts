@@ -29,6 +29,41 @@ const examples = [
   "meadow",
 ] as const;
 describe("procedural architecture", () => {
+  it("closes construction-scale gaps beneath every ancient column", () => {
+    const plans = Array.from({ length: 140 }, (_, index) =>
+      planArchitecture(
+        "column-supports",
+        "ancient-way",
+        index * 25 + 12.5,
+        1,
+        0,
+      ),
+    );
+    for (const plan of plans) {
+      const parts = architectureParts(plan);
+      for (const column of parts.filter((part) => part.shape === "column")) {
+        const foot = column.at[1] - column.size[1] / 2;
+        const supported = parts.some((support) => {
+          if (support === column || support.shape === "arch") return false;
+          const overlaps =
+            Math.abs(support.at[0] - column.at[0]) <=
+              (support.size[0] + column.size[0]) / 2 &&
+            Math.abs(support.at[2] - column.at[2]) <=
+              (support.size[2] + column.size[2]) / 2;
+          if (!overlaps) return false;
+          const bottom = support.at[1] - support.size[1] / 2;
+          const top = support.at[1] + support.size[1] / 2;
+          return bottom <= foot + 0.0011 && top >= foot - 0.0011;
+        });
+        const closeToFoundation = foot <= 0.0011;
+        expect(
+          supported || closeToFoundation,
+          `${plan.form} has an unsupported column at ${column.at.join(",")}`,
+        ).toBe(true);
+      }
+    }
+  });
+
   it("keeps exposed trim faces clear of overlapping wall faces", () => {
     for (const form of new Set(Object.values(ARCHITECTURE_FORMS).flat())) {
       for (const tiers of [2, 3, 4]) {

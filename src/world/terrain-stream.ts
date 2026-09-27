@@ -165,8 +165,9 @@ export class TerrainStream {
         disposeObject(page.group);
         this.pages.delete(key);
       }
-    // A cheap, lowered safety mesh covers newly requested space while pages
-    // build. It is retired as soon as the queue settles.
+    // A cheap safety mesh covers newly requested space while pages build. Keep
+    // it just below the final surface: distant scenery is already at its final
+    // elevation and otherwise appears to float over an intentionally deep gap.
     if (this.jobs.length || this.working) this.buildCover(center, fogFar + 200);
     this.surface.clearRenderCaches();
   }
@@ -186,7 +187,7 @@ export class TerrainStream {
       for (let x = 0; x <= size; x++) {
         const wx = startX + x * step,
           wz = startZ + z * step;
-        positions.push(wx, this.surface.landscapeHeight(wx, wz) - 30, wz);
+        positions.push(wx, this.surface.landscapeHeight(wx, wz) - 0.65, wz);
         if (x < size && z < size) {
           const a = z * (size + 1) + x;
           indices.push(
@@ -213,6 +214,9 @@ export class TerrainStream {
           this.surface.generator.settings.landscape === "city"
             ? 0x66716d
             : 0x75905c,
+        polygonOffset: true,
+        polygonOffsetFactor: 2,
+        polygonOffsetUnits: 2,
       }),
     );
     this.cover.name = "terrain-streaming-cover";

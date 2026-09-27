@@ -1,5 +1,50 @@
 import * as THREE from "three";
 
+export const SHADOW_FADE_START_M = 90;
+export const SHADOW_FADE_END_M = 125;
+
+/** Fade directional shadows before the finite shadow camera ends. This keeps
+ * the shadow-map boundary from reading as a dark line moving with the rider. */
+function fadeReceivedShadows(material: THREE.Material): void {
+  if (material.userData.distanceShadowFade === true) return;
+  material.userData.distanceShadowFade = true;
+  const previousCompile = material.onBeforeCompile;
+  const previousCacheKey = material.customProgramCacheKey.bind(material);
+  material.onBeforeCompile = (
+    shader: THREE.WebGLProgramParametersWithUniforms,
+    renderer: THREE.WebGLRenderer,
+  ) => {
+    previousCompile(shader, renderer);
+    shader.vertexShader =
+      "varying float shadowViewDistance;\n" + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <project_vertex>",
+      "#include <project_vertex>\nshadowViewDistance = length(mvPosition.xyz);",
+    );
+    shader.fragmentShader =
+      "varying float shadowViewDistance;\n" + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <lights_fragment_begin>",
+      `float distanceShadowMask() {
+  float shadowStrength = 1.0 - smoothstep(${SHADOW_FADE_START_M.toFixed(1)}, ${SHADOW_FADE_END_M.toFixed(1)}, shadowViewDistance);
+  return mix(1.0, getShadowMask(), shadowStrength);
+}
+#define getShadowMask distanceShadowMask
+#include <lights_fragment_begin>`,
+    );
+  };
+  material.customProgramCacheKey = () =>
+    `${previousCacheKey()}:distance-shadow-fade-v1`;
+  material.needsUpdate = true;
+}
+
+export function enableDistanceShadowFade(mesh: THREE.Mesh): void {
+  for (const material of Array.isArray(mesh.material)
+    ? mesh.material
+    : [mesh.material])
+    fadeReceivedShadows(material);
+}
+
 export function disposeObject(root: THREE.Object3D): void {
   const geometries = new Set<THREE.BufferGeometry>();
   const materials = new Set<THREE.Material>();

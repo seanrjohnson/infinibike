@@ -298,11 +298,17 @@ export function watersideLandmarkParts(
           box(side * 0.34 + offset, 0.39, z, 0.05, 0.17, 0.018, "roof");
       }
       box(side * 0.34, 0.055, 0, 0.25, 0.11, 0.78, "trim");
+      box(side * 0.34, 0.14, 0, 0.235, 0.045, 0.74, "trim");
     }
-    for (const z of [-0.3, 0.3])
+    for (const z of [-0.3, 0.3]) {
       add("arch", [0.49, 0.3, 0.12], [0, 0.65, z], "trim");
+      add("arch", [0.4, 0.22, 0.125], [0, 0.65, z], "roof");
+      for (const side of [-1, 1])
+        box(side * 0.27, 0.68, z, 0.035, 0.2, 0.14, "trim");
+    }
     box(0, 0.84, 0, 0.93, 0.13, 0.76);
     box(0, 0.925, 0, 0.96, 0.04, 0.8, "trim");
+    box(0, 0.795, 0, 0.98, 0.035, 0.82, "roof");
     for (let i = 0; i < plan.bays + 1; i++)
       box(-0.34 + (i * 0.68) / plan.bays, 0.965, 0, 0.05, 0.035, 0.12, "roof");
   } else if (plan.form === "crossing-stone-viaduct") {
@@ -310,6 +316,7 @@ export function watersideLandmarkParts(
       for (const z of [-0.23, 0.23]) box(x, 0.31, z, 0.07, 0.62, 0.18);
     for (const z of [-0.23, 0.23]) {
       add("arch", [0.49, 0.29, 0.18], [0, 0.65, z], "trim");
+      add("arch", [0.4, 0.215, 0.185], [0, 0.65, z], "roof");
       for (const side of [-1, 1])
         add("arch", [0.18, 0.17, 0.18], [side * 0.325, 0.54, z], "trim");
       box(0, 0.83, z, 0.94, 0.07, 0.16);
@@ -324,8 +331,11 @@ export function watersideLandmarkParts(
           "trim",
         );
       box(0, 0.94, z, 0.94, 0.025, 0.03, "trim");
+      for (const side of [-1, 1])
+        box(side * 0.43, 0.44, z, 0.055, 0.08, 0.21, "trim");
     }
     box(0, 0.79, 0, 0.94, 0.045, 0.62, "roof");
+    box(0, 0.97, 0, 0.98, 0.025, 0.66, "trim");
   }
   return parts;
 }

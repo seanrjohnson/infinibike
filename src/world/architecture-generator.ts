@@ -292,8 +292,52 @@ export function planArchitecture(
 
 /** Parts use a normalized parcel: X/Z stay within [-0.5, 0.5], Y within
  * [0, 1]. Structural parts are identical at near and far detail. */
+function groundAncientColumns(parts: ArchitecturePart[]): ArchitecturePart[] {
+  const maximumConstructionGap = 0.12;
+  const overlap = 0.001;
+  return parts.map((part, index) => {
+    if (part.shape !== "column" || part.rotationX || part.rotationZ)
+      return part;
+    const foot = part.at[1] - part.size[1] / 2;
+    let nearestTop = -Infinity;
+    let alreadySupported = false;
+    for (let supportIndex = 0; supportIndex < parts.length; supportIndex++) {
+      if (supportIndex === index) continue;
+      const support = parts[supportIndex]!;
+      if (support.shape === "arch") continue;
+      const horizontalOverlap =
+        Math.abs(support.at[0] - part.at[0]) <=
+          (support.size[0] + part.size[0]) / 2 &&
+        Math.abs(support.at[2] - part.at[2]) <=
+          (support.size[2] + part.size[2]) / 2;
+      if (!horizontalOverlap) continue;
+      const bottom = support.at[1] - support.size[1] / 2;
+      const top = support.at[1] + support.size[1] / 2;
+      if (bottom <= foot + overlap && top >= foot - overlap) {
+        alreadySupported = true;
+        break;
+      }
+      if (top < foot && top > nearestTop) nearestTop = top;
+    }
+    if (alreadySupported) return part;
+    const target = Number.isFinite(nearestTop) ? nearestTop : 0;
+    const gap = foot - target;
+    if (gap <= overlap || gap > maximumConstructionGap) return part;
+    const top = part.at[1] + part.size[1] / 2;
+    const bottom = target - overlap;
+    return {
+      ...part,
+      size: [part.size[0], top - bottom, part.size[2]],
+      at: [part.at[0], (top + bottom) / 2, part.at[2]],
+    };
+  });
+}
+
 export function architectureParts(plan: ArchitecturePlan): ArchitecturePart[] {
-  if (plan.monumental) return monumentParts(plan);
+  if (plan.monumental) {
+    const parts = monumentParts(plan);
+    return plan.family === "ancient" ? groundAncientColumns(parts) : parts;
+  }
   const parts: ArchitecturePart[] = [];
   const add = (
     shape: ArchitectureShape,
@@ -765,5 +809,5 @@ export function architectureParts(plan: ArchitecturePlan): ArchitecturePart[] {
     col(0.38, 0.48, 0.35, 0.07, 0.88);
     add("sphere", [0.12, 0.07, 0.12], [0.38, 0.955, 0.35], "glow");
   }
-  return parts;
+  return plan.family === "ancient" ? groundAncientColumns(parts) : parts;
 }
