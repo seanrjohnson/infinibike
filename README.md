@@ -51,6 +51,14 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
+Formatting requires a Git checkout. `npm run format` and `npm run format:write`
+include tracked files and new nonignored files while respecting `.prettierignore`.
+They do not traverse ignored local caches such as `.cache/audio-tools`, so cache
+permissions cannot interrupt the checks.
+
+See [scripted scenarios](docs/scenarios.md) for the Agincourt experiences,
+historical sources, authoring contracts, and validation limits.
+
 `npm run test:e2e` runs the full local Playwright suite, including authored
 scenery and optional visual-QA cases. CI uses `npm run test:e2e:ci` for the
 desktop ride, mobile layout, and graphics regression tests after linting, unit tests, and the

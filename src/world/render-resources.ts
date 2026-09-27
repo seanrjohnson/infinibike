@@ -25,16 +25,16 @@ function fadeReceivedShadows(material: THREE.Material): void {
       "varying float shadowViewDistance;\n" + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <lights_fragment_begin>",
-      `float distanceShadowMask() {
-  float shadowStrength = 1.0 - smoothstep(${SHADOW_FADE_START_M.toFixed(1)}, ${SHADOW_FADE_END_M.toFixed(1)}, shadowViewDistance);
-  return mix(1.0, getShadowMask(), shadowStrength);
-}
-#define getShadowMask distanceShadowMask
-#include <lights_fragment_begin>`,
+      // This chunk runs inside main(), so it cannot contain function definitions.
+      // Lit materials sample each light's shadow directly, not getShadowMask().
+      THREE.ShaderChunk.lights_fragment_begin.replaceAll(
+        "directionalLightShadow.shadowIntensity",
+        `(directionalLightShadow.shadowIntensity * (1.0 - smoothstep(${SHADOW_FADE_START_M.toFixed(1)}, ${SHADOW_FADE_END_M.toFixed(1)}, shadowViewDistance)))`,
+      ),
     );
   };
   material.customProgramCacheKey = () =>
-    `${previousCacheKey()}:distance-shadow-fade-v1`;
+    `${previousCacheKey()}:distance-shadow-fade-v2`;
   material.needsUpdate = true;
 }
 

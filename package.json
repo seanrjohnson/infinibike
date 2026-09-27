@@ -12,8 +12,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ci": "playwright test tests/e2e/smoke.spec.ts tests/e2e/graphics.spec.ts",
     "lint": "eslint .",
-    "format": "prettier --check .",
-    "format:write": "prettier --write .",
+    "format": "node scripts/format.mjs --check",
+    "format:write": "node scripts/format.mjs --write",
     "check": "npm run lint && npm run format && npm test && npm run build"
   },
   "dependencies": {

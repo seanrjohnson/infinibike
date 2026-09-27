@@ -55,6 +55,7 @@ export class TerrainStream {
   private working?: { job: Job; iterator: Generator<void, Page> };
   private revision = "";
   private cover?: THREE.Mesh;
+  private readonly coverTiles = new Map<TerrainTileKey, number[]>();
   private lastBuildMs = 0;
   private footprints: readonly OrientedFootprint[] = [];
   private desired = new Set<string>();
@@ -165,61 +166,68 @@ export class TerrainStream {
         disposeObject(page.group);
         this.pages.delete(key);
       }
-    // A cheap safety mesh covers newly requested space while pages build. Keep
-    // it just below the final surface: distant scenery is already at its final
-    // elevation and otherwise appears to float over an intentionally deep gap.
-    if (this.jobs.length || this.working) this.buildCover(center, fogFar + 200);
+    // Cover only missing tiles. A view-wide coarse sheet can protrude above an
+    // already loaded valley's horizon even when it does not write depth.
+    this.buildCover(
+      [...jobs.values()].flatMap((job) =>
+        job.tiles.filter(
+          (tile) => !this.pages.get(job.key)?.tiles.has(tile.key),
+        ),
+      ),
+    );
     this.surface.clearRenderCaches();
   }
 
-  private buildCover(center: WorldPoint, radius: number): void {
+  private buildCover(tiles: TerrainTile[]): void {
     if (this.cover) {
       this.group.remove(this.cover);
       disposeObject(this.cover);
+      this.cover = undefined;
     }
-    const step = 100,
-      startX = Math.floor((center.x - radius) / step) * step,
-      startZ = Math.floor((center.z - radius) / step) * step;
-    const size = Math.ceil((radius * 2) / step) + 2;
+    this.coverTiles.clear();
+    if (!tiles.length) return;
     const positions: number[] = [],
+      colors: number[] = [],
       indices: number[] = [];
-    for (let z = 0; z <= size; z++)
-      for (let x = 0; x <= size; x++) {
-        const wx = startX + x * step,
-          wz = startZ + z * step;
+    for (const tile of tiles) {
+      const base = positions.length / 3;
+      for (const [dx, dz] of [
+        [0, 0],
+        [50, 0],
+        [0, 50],
+        [50, 50],
+      ]) {
+        const wx = tile.x * 50 + dx!,
+          wz = tile.z * 50 + dz!;
         positions.push(wx, this.surface.landscapeHeight(wx, wz) - 0.65, wz);
-        if (x < size && z < size) {
-          const a = z * (size + 1) + x;
-          indices.push(
-            a,
-            a + size + 1,
-            a + 1,
-            a + 1,
-            a + size + 1,
-            a + size + 2,
-          );
-        }
+        const color = this.surface.colorAt(wx, wz);
+        colors.push(color.r, color.g, color.b);
       }
+      const faces = [base, base + 2, base + 1, base + 1, base + 2, base + 3];
+      indices.push(...faces);
+      this.coverTiles.set(tile.key, faces);
+    }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute(
       "position",
       new THREE.Float32BufferAttribute(positions, 3),
     );
     geometry.setIndex(indices);
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     geometry.computeVertexNormals();
     this.cover = new THREE.Mesh(
       geometry,
       new THREE.MeshLambertMaterial({
-        color:
-          this.surface.generator.settings.landscape === "city"
-            ? 0x66716d
-            : 0x75905c,
+        vertexColors: true,
         polygonOffset: true,
         polygonOffsetFactor: 2,
         polygonOffsetUnits: 2,
+        depthWrite: false,
       }),
     );
     this.cover.name = "terrain-streaming-cover";
+    // Draw after the sky (-1000), before all completed opaque world geometry.
+    this.cover.renderOrder = -900;
     this.group.add(this.cover);
   }
 
@@ -475,6 +483,15 @@ export class TerrainStream {
           previous = this.pages.get(key);
         this.group.add(result.value.group);
         this.pages.set(key, result.value);
+        // Retire each fallback tile as soon as its real page arrives, rather
+        // than keeping floating placeholder silhouettes until all work drains.
+        if (this.cover) {
+          let removed = false;
+          for (const tile of result.value.tiles.keys())
+            removed = this.coverTiles.delete(tile) || removed;
+          if (removed)
+            this.cover.geometry.setIndex([...this.coverTiles.values()].flat());
+        }
         if (previous) {
           this.group.remove(previous.group);
           disposeObject(previous.group);
@@ -492,6 +509,7 @@ export class TerrainStream {
       this.group.remove(this.cover);
       disposeObject(this.cover);
       this.cover = undefined;
+      this.coverTiles.clear();
       this.surface.clearRenderCaches();
       changed = true;
     }
@@ -532,6 +550,7 @@ export class TerrainStream {
       expansionBuildMs: this.lastBuildMs,
       continuationPageIntersections: roads,
       terrainCoverageRadiusM: this.coverageRadius,
+      terrainFallbackTiles: this.coverTiles.size,
     };
   }
 
@@ -546,6 +565,7 @@ export class TerrainStream {
     this.buildingGeometry.dispose();
     this.sceneryMaterial.dispose();
     this.cover = undefined;
+    this.coverTiles.clear();
   }
 }
 

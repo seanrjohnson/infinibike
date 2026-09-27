@@ -10,6 +10,9 @@ for (const mobile of [false, true])
       test.setTimeout(420_000);
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
+      page.on("console", (message) => {
+        if (message.type() === "error") errors.push(message.text());
+      });
       await page.goto("/?visualQa=1");
       await page
         .getByRole("button", { name: "Ride with keys or touch" })

@@ -162,6 +162,13 @@ function setShadow(root: THREE.Object3D, enabled: boolean): void {
 }
 
 export class WorldScene {
+  private rideScene?: import("./ride-scene").RideScene;
+
+  setRideScene(scene?: import("./ride-scene").RideScene): void {
+    this.rideScene?.dispose();
+    this.rideScene = scene;
+    this.idleDirty = true;
+  }
   private onDiscovery?: (encounters: Encounter[]) => void;
   private lastDiscoveryCheck = 0;
   private readonly discoveryFrames = new Map<
@@ -389,7 +396,8 @@ export class WorldScene {
             });
           return ids;
         },
-        setDistance: (distanceM) => this.setVisualQaDistance(distanceM),
+        setDistance: (distanceM, settleTerrain = true) =>
+          this.setVisualQaDistance(distanceM, settleTerrain),
         setGraphics: (preference) => this.setGraphicsPreference(preference),
         setCamera: (mode, angle = this.cameraSettings.angle) => {
           this.setCameraSettings({ ...this.cameraSettings, mode, angle });
@@ -696,6 +704,21 @@ export class WorldScene {
     this.lastFrame = now;
     if (!this.visualQaFrozen && this.realtime) this.elapsed += dt;
     this.onFrame?.(dt);
+    if (this.rideScene) {
+      if (!this.realtime && !this.idleDirty) return;
+      this.idleDirty = false;
+      this.renderer.info.reset();
+      const renderStart = performance.now();
+      this.rideScene.render(this.renderer, this.cameraSettings, this.quality);
+      this.renderCpuMs = performance.now() - renderStart;
+      this.renderedFrames++;
+      this.trackPerformance(dt);
+      window.__INFINIBIKE_DEBUG__ = {
+        ...this.getDiagnostics(),
+        ...this.rideScene.getDiagnostics(),
+      };
+      return;
+    }
     if (this.terrainStream.advance(dt)) this.idleDirty = true;
     if ((!this.realtime || this.visualQaFrozen) && !this.idleDirty) return;
     this.idleDirty = false;
@@ -2526,7 +2549,7 @@ export class WorldScene {
       .addScaledVector(lightDirection, 160);
   }
 
-  private setVisualQaDistance(distanceM: number): void {
+  private setVisualQaDistance(distanceM: number, settleTerrain = true): void {
     const targetDistance = Math.max(0, distanceM);
     this.visualQaDistanceOverride = targetDistance;
     if (targetDistance < this.originDistanceM) {
@@ -2542,7 +2565,7 @@ export class WorldScene {
     if (this.settings.landscape !== "city")
       this.applyRegionalGrading(sample.region);
     this.ensureChunks(this.rideDistanceM);
-    this.terrainStream.settle();
+    if (settleTerrain) this.terrainStream.settle();
     this.updateCyclist(sample, this.cadenceRpm, this.speedKph);
     this.updateCamera(10);
     this.animateWeather(0);
@@ -2858,7 +2881,7 @@ declare global {
         height: number;
       }[];
       renderedCityMonuments: () => string[];
-      setDistance: (distanceM: number) => void;
+      setDistance: (distanceM: number, settleTerrain?: boolean) => void;
       setGraphics: (preference: GraphicsPreference) => void;
       setCamera: (mode: CameraMode, angle?: CameraAngle) => void;
       settleExpansion: () => void;

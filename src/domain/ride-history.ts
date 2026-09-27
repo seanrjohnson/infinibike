@@ -1,4 +1,6 @@
 import type { RidePreferences } from "./ride-preferences";
+import type { ScenarioResult } from "../scenarios/types";
+import { normalizeScenarioResult } from "../scenarios/history";
 import { normalizeEnvironment, type EnvironmentSettings } from "./environment";
 import {
   DEFAULT_RIDE_MODE,
@@ -9,6 +11,7 @@ import type { RideSnapshot } from "./ride-model";
 import type { RideDataPoint } from "./ride-analytics";
 
 export type RideSummary = {
+  scenario?: ScenarioResult;
   discoveries?: string[];
   preferences?: RidePreferences;
   id: string;
@@ -43,6 +46,7 @@ export function validateRideHistory(value: unknown): RideSummary[] {
     return [
       {
         ...ride,
+        scenario: normalizeScenarioResult(ride.scenario),
         discoveries: Array.isArray(ride.discoveries)
           ? ride.discoveries
               .filter((id): id is string => typeof id === "string")

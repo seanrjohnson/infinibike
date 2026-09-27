@@ -1108,3 +1108,76 @@ select:focus {
   color: inherit;
   text-decoration: underline;
 }
+/* Scenario panels keep the authored scene visible on desktop and touch screens. */
+.scenario-card,
+.scenario-debrief {
+  padding: 1.2rem;
+  border: 1px solid #ac956550;
+  border-radius: 12px;
+  background: #152326e8;
+  margin-block: 1rem;
+}
+.scenario-briefing > label {
+  display: grid;
+  gap: 0.4rem;
+  margin-block: 1rem;
+}
+.scenario-sources {
+  margin-block: 1rem;
+  line-height: 1.5;
+}
+.scenario-sources a {
+  color: #e7c78c;
+}
+.scenario-sources summary {
+  cursor: pointer;
+}
+.scenario-caption {
+  position: absolute;
+  left: 22px;
+  bottom: 75px;
+  width: min(520px, calc(100vw - 44px));
+  padding: 16px 20px;
+  border: 1px solid #d0ba874a;
+  border-radius: 12px;
+  background: #142024eb;
+  color: #f3eddf;
+  pointer-events: auto;
+}
+.scenario-caption h2 {
+  font-size: 1.25rem;
+  margin: 0.3rem 0;
+}
+.scenario-caption p {
+  margin: 0.45rem 0;
+  line-height: 1.4;
+}
+.scenario-caption progress {
+  width: 100%;
+  height: 5px;
+  accent-color: #d3b575;
+}
+.scenario-fiction {
+  color: #e7c78c;
+  font-size: 0.8rem;
+}
+#scenario-cargo {
+  font-size: 0.85rem;
+}
+@media (max-width: 760px) {
+  .scenario-caption {
+    left: 10px;
+    bottom: 150px;
+    width: calc(100vw - 20px);
+    padding: 10px 12px;
+    max-height: 38vh;
+    overflow: auto;
+    font-size: 0.82rem;
+  }
+  .scenario-caption h2 {
+    font-size: 1.05rem;
+  }
+  .scenario-ride .hud {
+    max-height: 100px;
+  }
+}

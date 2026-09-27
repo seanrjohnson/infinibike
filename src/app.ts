@@ -49,6 +49,14 @@ import {
   createIcons,
 } from "lucide";
 import { RideAudio } from "./audio/ambient-audio";
+import { ScenarioAudio } from "./audio/scenario-audio";
+import { AGINCOURT } from "./scenarios/agincourt";
+import { ScenarioRuntime } from "./scenarios/runtime";
+import type {
+  ScenarioMode,
+  ScenarioResult,
+  ScenarioSessionConfig,
+} from "./scenarios/types";
 import { audioControls } from "./audio/audio-controls";
 import {
   normalizeMusicSettings,
@@ -174,6 +182,10 @@ function formatDistance(distanceM: number): string {
 }
 
 export class InfinibikeApp {
+  private scenarioConfig?: ScenarioSessionConfig;
+  private scenario?: ScenarioRuntime;
+  private readonly scenarioAudio = new ScenarioAudio();
+  private scenarioLoading = false;
   private journal = loadJournal(DISCOVERY_IDS);
   private readonly rideDiscoveries = new Set<string>();
   private journalStorageFailed = false;
@@ -239,18 +251,365 @@ export class InfinibikeApp {
     );
     this.installGlobalInput();
     this.rideAudio.configure(this.currentPreferences());
-    this.rideAudio.setEnabled(this.audioEnabled);
+    this.rideAudio.setEnabled(this.audioEnabled && !this.scenario);
     this.rideAudio.onStatus((status) => {
       const output = this.root.querySelector(".audio-status");
       if (output) output.textContent = status;
     });
-    window.addEventListener("pagehide", () => this.rideAudio.setPaused(true));
-    window.addEventListener("beforeunload", () => this.rideAudio.dispose());
+    window.addEventListener("pagehide", () => {
+      this.rideAudio.setPaused(true);
+      this.scenarioAudio.pause();
+    });
+    window.addEventListener("beforeunload", () => {
+      this.rideAudio.dispose();
+      this.scenarioAudio.dispose();
+    });
     this.showHome();
     document.addEventListener("visibilitychange", () => {
       if (document.hidden && this.gameActive && !this.paused)
         this.pauseRide("Ride paused");
     });
+  }
+
+  private clearScenario(): void {
+    this.gameActive = false;
+    this.world.setRealtime(false);
+    this.world.setRideScene();
+    this.scenarioAudio.dispose();
+    this.scenario = undefined;
+    this.scenarioConfig = undefined;
+    delete window.__INFINIBIKE_SCENARIO_QA__;
+  }
+
+  private showScenarios(error = ""): void {
+    this.clearScenario();
+    this.view = "setup";
+    this.root.innerHTML = `<main class="setup-shell"><section class="setup-content scenario-catalog">
+      <p class="eyebrow">Scripted rides</p><h1>Scenarios</h1>
+      <p class="lead">Ride through a moment in history.</p>
+      ${error ? `<p role="alert">${escapeHtml(error)}</p>` : ""}
+      <article class="scenario-card"><p class="eyebrow">France · 25 October 1415</p><h2>${AGINCOURT.title}</h2><p>${AGINCOURT.description}</p><p>Observe · Participate · Watch without a trainer</p><button id="choose-agincourt" class="primary">Explore Agincourt</button></article>
+      <p class="support-note">Stylized, non-graphic combat. Includes discussion of deaths and the killing of prisoners. Historical reconstruction and alternate endings are clearly identified.</p>
+      <button id="scenario-home">Back</button></section></main>`;
+    this.root
+      .querySelector("#choose-agincourt")
+      ?.addEventListener("click", () => {
+        this.scenarioConfig = {
+          scenarioId: AGINCOURT.id,
+          version: AGINCOURT.version,
+          mode: "observe",
+          durationMinutes: 30,
+          fitness: { ...this.ridePhysics },
+        };
+        this.showScenarioBriefing();
+      });
+    this.root
+      .querySelector("#scenario-home")
+      ?.addEventListener("click", () => void this.returnHome());
+  }
+
+  private scenarioSources(): string {
+    return `<details class="scenario-sources"><summary>Historical sources and reconstruction notes</summary><p>Routes, landscape scale, formation counts, timing, bicycles and supply missions are invented for this experience. Colours identify sides, not historical uniforms. The sequence compresses the battle; exact positions and chronology remain uncertain.</p><ul>${AGINCOURT.sources.map((source) => `<li><a href="${source.url}" target="_blank" rel="noopener noreferrer">${source.title}</a></li>`).join("")}</ul><p>Historical outcome: English victory. Alternate branches are authored fiction, not a combat simulation or a claim about why the battle was won.</p></details>`;
+  }
+
+  private showScenarioBriefing(message = ""): void {
+    const config = this.scenarioConfig;
+    if (!config) return this.showScenarios();
+    this.gameActive = false;
+    this.world.setRealtime(false);
+    this.view = "setup";
+    const connected = this.source?.getStatus().state === "connected";
+    this.root.innerHTML = `<main class="setup-shell"><section class="setup-content scenario-briefing">
+      <p class="eyebrow">Scenario briefing</p><h1>${AGINCOURT.title}</h1>
+      ${message ? `<p role="status">${escapeHtml(message)}</p>` : ""}
+      <p>${AGINCOURT.description}</p>
+      <label>Experience<select id="scenario-mode">${option("observe", "Observe · pedal around the battle", config.mode)}${option("participate", "Participate · deliver arrows", config.mode)}${option("watch", "Watch · guided tour, no trainer", config.mode)}</select></label>
+      <label>Duration<select id="scenario-duration">${AGINCOURT.durations.map((duration) => option(String(duration), `${duration} minutes`, String(config.durationMinutes))).join("")}</select></label>
+      <p id="scenario-role">${config.mode === "participate" ? "Follow the supply circuit. Arrows load and unload automatically. More deliveries strengthen the archers and can change the ending. Targets scale to your fitness; missing one never ends the ride." : config.mode === "watch" ? "A guided camera follows the historical sequence. No trainer is needed, and no exercise is recorded." : "Pedal along the perimeter while the historical battle unfolds. Events continue when you coast; pause whenever you need."}</p>
+      ${config.mode !== "watch" ? `<div class="configuration-grid two"><label>FTP (W)<input id="scenario-ftp" type="number" min="60" max="700" value="${config.fitness.ftpW}"></label><label>Rider weight (kg)<input id="scenario-weight" type="number" min="35" max="200" value="${config.fitness.riderWeightKg}"></label></div>` : ""}
+      <p class="support-note">Automatic steering · compressed time · non-graphic combat. The bicycle and delivery mission are fictional.</p>
+      ${this.scenarioSources()}
+      <div class="primary-stack">${config.mode === "watch" || (connected && this.profile) ? `<button id="start-scenario" class="primary">${config.mode === "watch" ? "Start watching" : "Start scenario"}</button>` : connected ? `<button id="scenario-calibrate">Enter wattages</button>` : `<button id="scenario-connect" class="primary">Connect trainer for scenario</button><button id="scenario-demo">Use demo controls</button>`}<button id="scenario-back">Scenario catalog</button></div>
+      </section></main>`;
+    const read = (): void => {
+      config.durationMinutes = Number(
+        this.root.querySelector<HTMLSelectElement>("#scenario-duration")!.value,
+      );
+      if (config.mode !== "watch")
+        config.fitness = normalizeRidePhysics({
+          ...config.fitness,
+          ftpW: Number(
+            this.root.querySelector<HTMLInputElement>("#scenario-ftp")?.value,
+          ),
+          riderWeightKg: Number(
+            this.root.querySelector<HTMLInputElement>("#scenario-weight")
+              ?.value,
+          ),
+        });
+    };
+    this.root
+      .querySelector("#scenario-mode")
+      ?.addEventListener("change", (event) => {
+        read();
+        config.mode = (event.target as HTMLSelectElement).value as ScenarioMode;
+        this.showScenarioBriefing();
+      });
+    this.root
+      .querySelector("#scenario-duration")
+      ?.addEventListener("change", read);
+    this.root
+      .querySelectorAll("#scenario-ftp, #scenario-weight")
+      .forEach((input) => input.addEventListener("change", read));
+    this.root
+      .querySelector("#start-scenario")
+      ?.addEventListener("click", () => {
+        read();
+        void this.startScenario();
+      });
+    this.root
+      .querySelector("#scenario-connect")
+      ?.addEventListener("click", () => {
+        read();
+        void this.connectTrainer();
+      });
+    this.root.querySelector("#scenario-demo")?.addEventListener("click", () => {
+      read();
+      void this.connectDemo();
+    });
+    this.root
+      .querySelector("#scenario-calibrate")
+      ?.addEventListener("click", () => this.showManualCalibration());
+    this.root
+      .querySelector("#scenario-back")
+      ?.addEventListener("click", () => this.showScenarios());
+  }
+
+  private async startScenarioAudio(): Promise<void> {
+    try {
+      await this.scenarioAudio.start();
+      if (
+        !this.scenario ||
+        this.paused ||
+        !this.gameActive ||
+        !this.audioEnabled
+      )
+        this.scenarioAudio.pause();
+    } catch {
+      this.showToast(
+        "Scenario sound is unavailable; captions remain available.",
+      );
+    }
+  }
+
+  private async startScenario(): Promise<void> {
+    if (!this.scenarioConfig || this.scenarioLoading) return;
+    this.scenarioLoading = true;
+    this.pendingReplay = false;
+    const config = structuredClone(this.scenarioConfig);
+    this.gameActive = false;
+    this.world.setRealtime(false);
+    this.rideAudio.setPaused(true);
+    this.rideAudio.setEnabled(false);
+    this.root.innerHTML = `<main class="setup-shell"><section class="setup-content"><h1>Preparing Agincourt</h1><progress aria-label="Loading scenario"></progress><p id="scenario-loading" role="status">Preparing route…</p></section></main>`;
+    try {
+      await this.restoreBaselineLoad();
+      if (config.mode === "watch") {
+        this.sourceUnsubscribers.forEach((unsubscribe) => unsubscribe());
+        this.sourceUnsubscribers = [];
+        await this.source?.disconnect();
+        this.source = undefined;
+        this.demoSource = undefined;
+      }
+      const profile = this.profile ?? {
+        deviceId: "watch",
+        cruisePowerW: 120,
+        hardPowerW: 260,
+        calibratedAt: "",
+      };
+      const runtime = new ScenarioRuntime(AGINCOURT, config, profile);
+      const { loadScenarioScene } = await import("./scenarios/scenario-scene");
+      const scene = await loadScenarioScene(runtime, (message) => {
+        const element = this.root.querySelector("#scenario-loading");
+        if (element) element.textContent = message;
+      });
+      this.scenario = runtime;
+      this.world.setRideScene(scene);
+      this.world.setCameraSettings(this.cameraSettings);
+      this.ridePhysics = { ...config.fitness };
+      this.model = new RideModel(profile, config.fitness);
+      this.model.applyTelemetry(this.latestTelemetry);
+      this.snapshot = this.model.getSnapshot();
+      this.rideStartedAt = new Date();
+      this.rideSamples = [];
+      this.rideDiscoveries.clear();
+      this.finishingRide = false;
+      this.paused = false;
+      this.lastAppliedGrade = undefined;
+      this.lastGrade = 0;
+      this.gameActive = true;
+      this.world.setRealtime(true);
+      this.showRideHud();
+      if (this.audioEnabled) void this.startScenarioAudio();
+      if (new URLSearchParams(location.search).has("e2e"))
+        window.__INFINIBIKE_SCENARIO_QA__ = {
+          advance: (seconds, distanceM) => {
+            if (!this.gameActive || this.paused) return;
+            runtime.advance(seconds, distanceM);
+            this.updateScenarioHud();
+            if (runtime.state.completed) void this.endRide(true);
+          },
+          status: (state) => this.handleConnectionStatus({ state }),
+          state: () => structuredClone(runtime.state),
+        };
+    } catch (error) {
+      this.showScenarios(
+        error instanceof Error
+          ? error.message
+          : "Could not load scenario. Please retry.",
+      );
+    } finally {
+      this.scenarioLoading = false;
+    }
+  }
+
+  private decorateScenarioHud(): void {
+    const watch = this.scenario?.config.mode === "watch";
+    this.root.querySelector(".route-preview")?.remove();
+    this.root.querySelector(".ride-objective")?.remove();
+    if (watch) {
+      this.root.querySelector(".hud")?.remove();
+      this.root.querySelector(".demo-power-control")?.remove();
+    }
+    this.root.querySelector(".ride-ui")?.classList.add("scenario-ride");
+    this.root
+      .querySelector(".ride-ui")
+      ?.insertAdjacentHTML(
+        "beforeend",
+        `<section class="scenario-caption" aria-label="Scenario events"><p class="eyebrow">Agincourt · <span id="scenario-clock"></span></p><h2 id="scenario-phase" aria-live="polite"></h2><p id="scenario-caption"></p><p id="scenario-direction" class="support-note"></p><p id="scenario-fiction" class="scenario-fiction" aria-live="polite"></p><p id="scenario-cargo"></p><progress id="scenario-progress" aria-label="Scenario progress" max="1" value="0"></progress></section>`,
+      );
+    const badge = this.root.querySelector(".connection-badge");
+    if (badge && watch)
+      badge.textContent = "Guided tour · no exercise recorded";
+  }
+
+  private updateScenario(dt: number): void {
+    const runtime = this.scenario!;
+    const step = Math.max(0, Math.min(0.1, dt));
+    let distance = 0;
+    if (runtime.config.mode === "watch")
+      distance = (runtime.route.lengthM * step) / 180;
+    else if (this.model) {
+      const before = this.model.getSnapshot().distanceM;
+      this.snapshot = this.model.update(
+        Math.min(step, (runtime.durationMs - runtime.state.elapsedMs) / 1000),
+        0,
+      );
+      distance = this.snapshot.distanceM - before;
+      void this.applyTerrainLoad(0);
+      const previous = this.rideSamples.at(-1);
+      if (!previous || this.snapshot.elapsedMs - previous.elapsedMs >= 1000)
+        this.rideSamples.push({
+          elapsedMs: this.snapshot.elapsedMs,
+          distanceM: this.snapshot.distanceM,
+          powerW: this.snapshot.powerW,
+          cadenceRpm: this.snapshot.cadenceRpm,
+          speedKph: this.snapshot.speedKph,
+          gradePercent: 0,
+        });
+    }
+    runtime.advance(step, distance);
+    this.scenarioAudio.update(
+      this.audioEnabled,
+      this.paused,
+      this.terrainVolume,
+      runtime.state.phase,
+    );
+    if (performance.now() - this.lastHudUpdate > 150) {
+      this.updateScenarioHud();
+      this.lastHudUpdate = performance.now();
+    }
+    if (runtime.state.completed) void this.endRide(true);
+  }
+
+  private updateScenarioHud(): void {
+    const runtime = this.scenario;
+    if (!runtime || this.view !== "ride") return;
+    const s = runtime.state;
+    const beat = runtime.definition.timeline[s.phase]!;
+    const set = (id: string, value: string): void => {
+      const element = this.root.querySelector(`#${id}`);
+      if (element && element.textContent !== value) element.textContent = value;
+    };
+    set(
+      "scenario-clock",
+      `${formatDuration(s.elapsedMs)} / ${`${runtime.config.durationMinutes}:00`}`,
+    );
+    set("scenario-phase", beat.title);
+    set("scenario-caption", beat.caption);
+    const position = runtime.route.sample(s.distanceM);
+    const dx = beat.focus[0] - position.position.x,
+      dz = beat.focus[1] - position.position.z;
+    const dot = position.tangent.x * dx + position.tangent.z * dz;
+    const cross = position.tangent.z * dx - position.tangent.x * dz;
+    const direction =
+      dot < -Math.hypot(dx, dz) * 0.5
+        ? "Behind you"
+        : cross > 20
+          ? "To your right"
+          : cross < -20
+            ? "To your left"
+            : "Ahead";
+    set(
+      "scenario-direction",
+      runtime.config.mode === "watch"
+        ? "Guided view · reconstructed geography and compressed time"
+        : `${direction} · ${Math.round(Math.hypot(dx, dz))} m to the current action`,
+    );
+    set(
+      "scenario-fiction",
+      runtime.config.mode === "participate"
+        ? s.departedHistory
+          ? `Alternate history in progress · ${AGINCOURT.branches[s.branch ?? "defeat"].title}`
+          : "Fictional supply mission · historical events are the baseline"
+        : "Historical sequence · reconstructed staging",
+    );
+    if (runtime.config.mode === "participate") {
+      const next = runtime.definition.checkpoints.find(
+        (at) => at * runtime.durationMs > s.elapsedMs,
+      );
+      set(
+        "scenario-cargo",
+        `${s.cargo ? "Carrying arrows → archers" : "Empty → supply train"} · ${s.deliveries} deliveries${next ? ` · target ${runtime.targetAt(next).toFixed(1)} by ${formatDuration(next * runtime.durationMs)}` : ""} · contribution ${Math.round(runtime.contribution * 100)}%`,
+      );
+    }
+    const progress =
+      this.root.querySelector<HTMLProgressElement>("#scenario-progress");
+    if (progress) progress.value = s.elapsedMs / runtime.durationMs;
+    if (this.snapshot) {
+      set("hud-power", String(Math.round(this.snapshot.powerW)));
+      set("hud-speed", this.snapshot.speedKph.toFixed(1));
+      set("hud-distance", (this.snapshot.distanceM / 1000).toFixed(2));
+      set("hud-time", formatDuration(this.snapshot.elapsedMs));
+    }
+  }
+
+  private scenarioDebrief(result: ScenarioResult): string {
+    const ending =
+      result.completed && result.outcome
+        ? AGINCOURT.branches[result.outcome]
+        : undefined;
+    return `<section class="scenario-debrief"><p class="eyebrow">Agincourt · ${escapeHtml(result.config.mode)} · ${result.config.durationMinutes} minutes</p><h2>${ending?.title ?? "Scenario incomplete"}</h2><p>${ending ? (result.config.mode === "participate" ? ending.description : "You witnessed a compressed reconstruction of the historical English victory.") : "You ended the session early. No ending was assigned."}</p>${result.config.mode === "participate" ? `<p>${result.deliveries} arrow deliveries · ${Math.round(result.contribution * 100)}% contribution</p>` : ""}<p>History: the English won at Agincourt. Supply-driven branches and this bicycle route are fictional.</p>${this.scenarioSources()}</section>`;
+  }
+
+  private showWatchDebrief(result: ScenarioResult): void {
+    this.view = "summary";
+    this.root.innerHTML = `<main class="summary-shell"><section class="summary-content"><h1>Tour ${result.completed ? "complete" : "ended"}</h1>${this.scenarioDebrief(result)}<p>No exercise or ride history was recorded.</p><div class="inline-actions"><button id="watch-again">Watch again</button><button id="done">Done</button></div></section></main>`;
+    this.root
+      .querySelector("#watch-again")
+      ?.addEventListener("click", () => this.showScenarioBriefing());
+    this.root
+      .querySelector("#done")
+      ?.addEventListener("click", () => void this.returnHome());
   }
 
   private rememberBaseline(): void {
@@ -284,6 +643,7 @@ export class InfinibikeApp {
   }
 
   private showHome(): void {
+    if (this.scenarioConfig) this.clearScenario();
     const remembered = lastTrainer();
     const saved = remembered ? loadCalibration(remembered.id) : undefined;
     this.view = "home";
@@ -302,7 +662,7 @@ export class InfinibikeApp {
             <button id="connect" class="primary"><i data-lucide="bluetooth"></i>Connect smart trainer</button>
             <button id="demo"><i data-lucide="keyboard"></i>Ride with keys or touch</button>
           </div>
-          <div class="quiet-actions">
+          <div class="quiet-actions"><button id="scenarios">Scenarios</button>
             <button id="discoveries" class="quiet">Discoveries</button>
             <button id="history" class="quiet"><i data-lucide="history"></i>Ride history</button>
           </div>
@@ -311,6 +671,9 @@ export class InfinibikeApp {
       </main>
     `;
     this.icons();
+    this.root
+      .querySelector("#scenarios")
+      ?.addEventListener("click", () => this.showScenarios());
     this.root
       .querySelector("#discoveries")
       ?.addEventListener("click", () => this.showDiscoveries());
@@ -409,6 +772,10 @@ export class InfinibikeApp {
   }
 
   private showSetup(): void {
+    if (this.scenarioConfig) {
+      this.showScenarioBriefing();
+      return;
+    }
     if (!this.pendingReplay) this.environment.biomeGenerationVersion = 2;
     this.view = "setup";
     this.world.setRealtime(false);
@@ -688,7 +1055,7 @@ export class InfinibikeApp {
     this.readMusicSettings();
     const audio = this.root.querySelector<HTMLInputElement>("#ambient-audio");
     if (audio) this.audioEnabled = audio.checked;
-    this.rideAudio.setEnabled(this.audioEnabled);
+    this.rideAudio.setEnabled(this.audioEnabled && !this.scenario);
     if (this.audioEnabled) void this.rideAudio.prepare();
   }
 
@@ -837,6 +1204,10 @@ export class InfinibikeApp {
   }
 
   private async startCountdown(): Promise<void> {
+    if (this.scenarioConfig) {
+      await this.startScenario();
+      return;
+    }
     this.pendingReplay = false;
     this.readEnvironment();
     this.readRideMode();
@@ -853,7 +1224,7 @@ export class InfinibikeApp {
     this.world.configure(this.environment);
     this.world.setCameraSettings(this.cameraSettings);
     this.persistPreferences();
-    this.rideAudio.setEnabled(this.audioEnabled);
+    this.rideAudio.setEnabled(this.audioEnabled && !this.scenario);
     if (this.audioEnabled) void this.rideAudio.start();
     this.model = new RideModel(this.profile, this.ridePhysics);
     this.model.applyTelemetry(this.latestTelemetry);
@@ -911,6 +1282,7 @@ export class InfinibikeApp {
       </main>
     `;
     this.icons();
+    if (this.scenario) this.decorateScenarioHud();
     this.root.querySelector("#compact-hud")?.addEventListener("click", () => {
       this.compactHud = !this.compactHud;
       this.persistPreferences();
@@ -958,6 +1330,7 @@ export class InfinibikeApp {
   }
 
   private pauseRide(title: string): void {
+    this.scenarioAudio.pause();
     if (!this.gameActive) return;
     this.paused = true;
     this.world.setRealtime(false);
@@ -1045,7 +1418,7 @@ export class InfinibikeApp {
         this.root.querySelector<HTMLInputElement>("#pause-audio")!.checked;
       this.world.setCameraSettings(this.cameraSettings);
       this.persistPreferences();
-      this.rideAudio.setEnabled(this.audioEnabled);
+      this.rideAudio.setEnabled(this.audioEnabled && !this.scenario);
       if (this.audioEnabled) void this.rideAudio.prepare();
     };
     this.root
@@ -1073,10 +1446,13 @@ export class InfinibikeApp {
     this.showRideHud();
     this.paused = false;
     this.world.setRealtime(true);
-    this.rideAudio.setPaused(false);
+    if (this.scenario) {
+      if (this.audioEnabled) void this.startScenarioAudio();
+    } else this.rideAudio.setPaused(false);
   }
 
   private async endRide(goalCompleted = false): Promise<void> {
+    this.scenarioAudio.pause();
     if (this.finishingRide) return;
     this.finishingRide = true;
     this.gameActive = false;
@@ -1084,6 +1460,10 @@ export class InfinibikeApp {
     this.world.setRealtime(false);
     this.rideAudio.setPaused(true);
     await this.restoreBaselineLoad();
+    if (this.scenario?.config.mode === "watch") {
+      this.showWatchDebrief(this.scenario.result());
+      return;
+    }
     if (!this.snapshot || !this.rideStartedAt) return this.showSetup();
     this.lastSummary = createRideSummary(
       this.rideStartedAt,
@@ -1097,6 +1477,7 @@ export class InfinibikeApp {
     );
     this.lastSummary.preferences = this.currentPreferences();
     this.lastSummary.discoveries = [...this.rideDiscoveries];
+    if (this.scenario) this.lastSummary.scenario = this.scenario.result();
     saveRideSummary(this.lastSummary);
     this.showSummary(this.lastSummary);
   }
@@ -1117,17 +1498,22 @@ export class InfinibikeApp {
     this.root.innerHTML = `
       <main class="summary-shell">
         <section class="summary-content" aria-labelledby="summary-title" tabindex="0">
-          <p class="eyebrow">${summary.goalCompleted ? "Goal complete" : "Ride complete"} · ${modeLabel(summary.rideMode.mode)}</p><h1 id="summary-title">${formatDistance(summary.distanceM)}</h1>
+          <p class="eyebrow">${summary.goalCompleted ? "Goal complete" : "Ride complete"} · ${summary.scenario ? "Scenario" : modeLabel(summary.rideMode.mode)}</p><h1 id="summary-title">${formatDistance(summary.distanceM)}</h1>
+          ${summary.scenario ? this.scenarioDebrief(summary.scenario) : ""}
           <div class="summary-grid">
             <div><span>Time</span><strong>${formatDuration(summary.durationMs)}</strong></div>
             <div><span>Average power</span><strong>${Math.round(summary.averagePowerW)} W</strong></div>
             <div><span>Peak power</span><strong>${Math.round(summary.maxPowerW)} W</strong></div>
             <div><span>Elevation</span><strong>${Math.round(summary.elevationGainM)} m</strong></div>
           </div>
-          <div class="seed-summary"><span>World seed</span><strong>${escapeHtml(summary.environment.seed)}</strong></div>
+          ${
+            summary.scenario
+              ? ""
+              : `<div class="seed-summary"><span>World seed</span><strong>${escapeHtml(summary.environment.seed)}</strong></div>
           <div class="seed-summary"><span>Landscape</span><strong>${LANDSCAPE_LABELS[summary.environment.landscape]}</strong></div>
-          <p>${(summary.discoveries ?? []).length} new discoveries${(summary.discoveries ?? []).length ? ": " + (summary.discoveries ?? []).map((id) => escapeHtml(DISCOVERY_CATALOG.find((item) => item.id === id)?.name ?? id)).join(", ") : ""}.</p><button id="summary-discoveries" class="quiet">Open discovery journal</button>
-          <div class="seed-summary"><span>Ride goal</span><strong>${goalLabel(summary.rideMode)}</strong></div>
+          <p>${(summary.discoveries ?? []).length} new discoveries${(summary.discoveries ?? []).length ? ": " + (summary.discoveries ?? []).map((id) => escapeHtml(DISCOVERY_CATALOG.find((item) => item.id === id)?.name ?? id)).join(", ") : ""}.</p><button id="summary-discoveries" class="quiet">Open discovery journal</button>`
+          }
+          <div class="seed-summary"><span>Ride goal</span><strong>${summary.scenario ? `${summary.scenario.config.durationMinutes} minute scenario` : goalLabel(summary.rideMode)}</strong></div>
           <section class="ride-analysis" aria-labelledby="analysis-title">
             <header><h2 id="analysis-title">Ride analysis</h2><span>${summary.ftpW} W FTP</span></header>
             <canvas id="ride-chart" width="720" height="240" aria-label="Power and elevation chart"></canvas>
@@ -1142,6 +1528,21 @@ export class InfinibikeApp {
       .querySelector("#summary-discoveries")
       ?.addEventListener("click", () => this.showDiscoveries(summary));
     this.drawRideChart(summary.samples);
+    const summaryPanel =
+      this.root.querySelector<HTMLElement>(".summary-content");
+    summaryPanel?.addEventListener("keydown", (event) => {
+      if (
+        event.target === summaryPanel &&
+        event.ctrlKey &&
+        (event.key === "Home" || event.key === "End")
+      ) {
+        event.preventDefault();
+        summaryPanel.scrollTo({
+          top: event.key === "Home" ? 0 : summaryPanel.scrollHeight,
+          behavior: "instant",
+        });
+      }
+    });
     this.root
       .querySelector("#export")
       ?.addEventListener("click", () => this.exportRide(summary));
@@ -1160,6 +1561,25 @@ export class InfinibikeApp {
   }
 
   private async replayRide(summary: RideSummary): Promise<void> {
+    if (summary.scenario) {
+      this.clearScenario();
+      this.scenarioConfig = structuredClone(summary.scenario.config);
+      const unavailable =
+        this.scenarioConfig.scenarioId !== AGINCOURT.id ||
+        this.scenarioConfig.version !== AGINCOURT.version;
+      if (unavailable) {
+        this.scenarioConfig = {
+          ...this.scenarioConfig,
+          scenarioId: AGINCOURT.id,
+          version: AGINCOURT.version,
+        };
+        this.showScenarioBriefing(
+          "The saved scenario version is unavailable. The current Agincourt version is offered below; starting it creates a new session.",
+        );
+      } else this.showScenarioBriefing();
+      return;
+    }
+    this.clearScenario();
     if (summary.preferences)
       Object.assign(
         this,
@@ -1183,6 +1603,7 @@ export class InfinibikeApp {
   }
 
   private recordEncounters(encounters: Encounter[]): void {
+    if (this.scenario) return;
     if (!this.gameActive || this.paused) return;
     const fresh = encounters.filter(
       (item) => !this.journal.entries.some((entry) => entry.id === item.id),
@@ -1358,7 +1779,7 @@ export class InfinibikeApp {
       ? history
           .map(
             (ride, index) =>
-              `<article class="ride-row"><div><strong>${formatDistance(ride.distanceM)}</strong><span>${new Date(ride.startedAt).toLocaleDateString()} · ${modeLabel(ride.rideMode.mode)} · ${escapeHtml(ride.environment.seed)}</span></div><div><strong>${formatDuration(ride.durationMs)}</strong><span>${Math.round(ride.averagePowerW)} W avg</span><button data-replay="${index}" aria-label="Ride again: ${escapeHtml(ride.environment.seed)}">Ride again</button></div></article>`,
+              `<article class="ride-row"><div><strong>${formatDistance(ride.distanceM)}</strong><span>${new Date(ride.startedAt).toLocaleDateString()} · ${ride.scenario ? `Agincourt / ${escapeHtml(ride.scenario.config.mode)}` : modeLabel(ride.rideMode.mode)} · ${ride.scenario ? (ride.scenario.completed ? "Scenario complete" : "Incomplete") : escapeHtml(ride.environment.seed)}</span></div><div><strong>${formatDuration(ride.durationMs)}</strong><span>${Math.round(ride.averagePowerW)} W avg</span><button data-replay="${index}" aria-label="Ride again: ${ride.scenario ? "Agincourt" : escapeHtml(ride.environment.seed)}">Ride again</button></div></article>`,
           )
           .join("")
       : `<div class="empty-state"><p>No rides yet</p><span>Your completed rides will appear here.</span></div>`;
@@ -1383,6 +1804,10 @@ export class InfinibikeApp {
   }
 
   private update(dt: number): void {
+    if (this.scenario && this.gameActive && !this.paused) {
+      this.updateScenario(dt);
+      return;
+    }
     if (!this.gameActive || this.paused || !this.model) return;
     const current = this.model.getSnapshot();
     const road = this.world.getRoadSample(current.distanceM);
@@ -1415,6 +1840,10 @@ export class InfinibikeApp {
   }
 
   private updateHud(gradePercent: number): void {
+    if (this.scenario) {
+      this.updateScenarioHud();
+      return;
+    }
     if (!this.snapshot || this.view !== "ride") return;
     const set = (id: string, value: string): void => {
       const element = this.root.querySelector(`#${id}`);
@@ -1654,6 +2083,7 @@ export class InfinibikeApp {
   }
 
   private async returnHome(): Promise<void> {
+    this.clearScenario();
     this.pendingReplay = false;
     this.rideAudio.setPaused(true);
     await this.restoreBaselineLoad();
@@ -1750,8 +2180,11 @@ export class InfinibikeApp {
   private toggleAudio(): void {
     this.audioEnabled = !this.audioEnabled;
     this.persistPreferences();
-    this.rideAudio.setEnabled(this.audioEnabled);
-    if (this.audioEnabled) void this.rideAudio.start();
+    this.rideAudio.setEnabled(this.audioEnabled && !this.scenario);
+    if (this.scenario) {
+      if (this.audioEnabled) void this.startScenarioAudio();
+      else this.scenarioAudio.pause();
+    } else if (this.audioEnabled) void this.rideAudio.start();
     const button = this.root.querySelector<HTMLButtonElement>("#audio");
     if (!button) return;
     button.title = this.audioEnabled
