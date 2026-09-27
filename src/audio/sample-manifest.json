@@ -1,0 +1,740 @@
+{
+  "samples": [
+    {
+      "instrument": "piano",
+      "url": "piano/45-0.mp3",
+      "rootMidi": 45,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 51077
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/45-1.mp3",
+      "rootMidi": 45,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 53784
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/57-0.mp3",
+      "rootMidi": 57,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 47203
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/57-1.mp3",
+      "rootMidi": 57,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 50136
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/69-0.mp3",
+      "rootMidi": 69,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 41484
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/69-1.mp3",
+      "rootMidi": 69,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 46932
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/81-0.mp3",
+      "rootMidi": 81,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 34418
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/81-1.mp3",
+      "rootMidi": 81,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 38019
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/48-0.mp3",
+      "rootMidi": 48,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 44567
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/48-1.mp3",
+      "rootMidi": 48,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 46614
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/60-0.mp3",
+      "rootMidi": 60,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 46990
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/60-1.mp3",
+      "rootMidi": 60,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 49871
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/72-0.mp3",
+      "rootMidi": 72,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 41174
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/72-1.mp3",
+      "rootMidi": 72,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 44493
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/84-0.mp3",
+      "rootMidi": 84,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 41722
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/84-1.mp3",
+      "rootMidi": 84,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 43500
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/51-0.mp3",
+      "rootMidi": 51,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 47511
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/51-1.mp3",
+      "rootMidi": 51,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 49343
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/63-0.mp3",
+      "rootMidi": 63,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 43772
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/63-1.mp3",
+      "rootMidi": 63,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 47302
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/75-0.mp3",
+      "rootMidi": 75,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 40017
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/75-1.mp3",
+      "rootMidi": 75,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 42789
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/54-0.mp3",
+      "rootMidi": 54,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 46043
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/54-1.mp3",
+      "rootMidi": 54,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 49609
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/66-0.mp3",
+      "rootMidi": 66,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 41718
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/66-1.mp3",
+      "rootMidi": 66,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 46614
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/78-0.mp3",
+      "rootMidi": 78,
+      "velocityLow": 0,
+      "velocityHigh": 0.58,
+      "bytes": 34733
+    },
+    {
+      "instrument": "piano",
+      "url": "piano/78-1.mp3",
+      "rootMidi": 78,
+      "velocityLow": 0.58,
+      "velocityHigh": 1,
+      "bytes": 37791
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/45-0.mp3",
+      "rootMidi": 45,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14870
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/57-0.mp3",
+      "rootMidi": 57,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13364
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/69-0.mp3",
+      "rootMidi": 69,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 16328
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/81-0.mp3",
+      "rootMidi": 81,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 10637
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/48-0.mp3",
+      "rootMidi": 48,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14689
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/60-0.mp3",
+      "rootMidi": 60,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13859
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/72-0.mp3",
+      "rootMidi": 72,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 10530
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/52-0.mp3",
+      "rootMidi": 52,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14792
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/64-0.mp3",
+      "rootMidi": 64,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 16639
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/76-0.mp3",
+      "rootMidi": 76,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 9935
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/55-0.mp3",
+      "rootMidi": 55,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14948
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/67-0.mp3",
+      "rootMidi": 67,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 15004
+    },
+    {
+      "instrument": "guitar",
+      "url": "guitar/79-0.mp3",
+      "rootMidi": 79,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 9647
+    },
+    {
+      "instrument": "bass",
+      "url": "bass/34-0.mp3",
+      "rootMidi": 34,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 8626
+    },
+    {
+      "instrument": "bass",
+      "url": "bass/45-0.mp3",
+      "rootMidi": 45,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 12864
+    },
+    {
+      "instrument": "bass",
+      "url": "bass/49-0.mp3",
+      "rootMidi": 49,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 12656
+    },
+    {
+      "instrument": "bass",
+      "url": "bass/36-0.mp3",
+      "rootMidi": 36,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 7040
+    },
+    {
+      "instrument": "bass",
+      "url": "bass/38-0.mp3",
+      "rootMidi": 38,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 12760
+    },
+    {
+      "instrument": "bass",
+      "url": "bass/28-0.mp3",
+      "rootMidi": 28,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 10342
+    },
+    {
+      "instrument": "bass",
+      "url": "bass/40-0.mp3",
+      "rootMidi": 40,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 7534
+    },
+    {
+      "instrument": "bass",
+      "url": "bass/52-0.mp3",
+      "rootMidi": 52,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 10862
+    },
+    {
+      "instrument": "bass",
+      "url": "bass/30-0.mp3",
+      "rootMidi": 30,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 6572
+    },
+    {
+      "instrument": "bass",
+      "url": "bass/42-0.mp3",
+      "rootMidi": 42,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 12838
+    },
+    {
+      "instrument": "bass",
+      "url": "bass/44-0.mp3",
+      "rootMidi": 44,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 12838
+    },
+    {
+      "instrument": "bass",
+      "url": "bass/31-0.mp3",
+      "rootMidi": 31,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 4596
+    },
+    {
+      "instrument": "harp",
+      "url": "harp/48-0.mp3",
+      "rootMidi": 48,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 12994
+    },
+    {
+      "instrument": "harp",
+      "url": "harp/60-0.mp3",
+      "rootMidi": 60,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13254
+    },
+    {
+      "instrument": "harp",
+      "url": "harp/72-0.mp3",
+      "rootMidi": 72,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13593
+    },
+    {
+      "instrument": "harp",
+      "url": "harp/84-0.mp3",
+      "rootMidi": 84,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 9850
+    },
+    {
+      "instrument": "harp",
+      "url": "harp/52-0.mp3",
+      "rootMidi": 52,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 12994
+    },
+    {
+      "instrument": "harp",
+      "url": "harp/64-0.mp3",
+      "rootMidi": 64,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13749
+    },
+    {
+      "instrument": "harp",
+      "url": "harp/76-0.mp3",
+      "rootMidi": 76,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13594
+    },
+    {
+      "instrument": "harp",
+      "url": "harp/56-0.mp3",
+      "rootMidi": 56,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13020
+    },
+    {
+      "instrument": "harp",
+      "url": "harp/68-0.mp3",
+      "rootMidi": 68,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13462
+    },
+    {
+      "instrument": "harp",
+      "url": "harp/80-0.mp3",
+      "rootMidi": 80,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 9643
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/50-0.mp3",
+      "rootMidi": 50,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 15184
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/52-0.mp3",
+      "rootMidi": 52,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13880
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/54-0.mp3",
+      "rootMidi": 54,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14532
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/55-0.mp3",
+      "rootMidi": 55,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 15158
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/57-0.mp3",
+      "rootMidi": 57,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 16740
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/59-0.mp3",
+      "rootMidi": 59,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 15154
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/61-0.mp3",
+      "rootMidi": 61,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14868
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/62-0.mp3",
+      "rootMidi": 62,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14452
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/69-0.mp3",
+      "rootMidi": 69,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 15284
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/81-0.mp3",
+      "rootMidi": 81,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 7251
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/71-0.mp3",
+      "rootMidi": 71,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 15286
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/73-0.mp3",
+      "rootMidi": 73,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 15390
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/74-0.mp3",
+      "rootMidi": 74,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 15649
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/64-0.mp3",
+      "rootMidi": 64,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 15933
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/76-0.mp3",
+      "rootMidi": 76,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 15314
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/66-0.mp3",
+      "rootMidi": 66,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 16117
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/78-0.mp3",
+      "rootMidi": 78,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14712
+    },
+    {
+      "instrument": "strumstick",
+      "url": "strumstick/67-0.mp3",
+      "rootMidi": 67,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 15206
+    },
+    {
+      "instrument": "shaker",
+      "url": "shaker/60-0.mp3",
+      "rootMidi": 60,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 2677
+    },
+    {
+      "instrument": "vibraphone",
+      "url": "vibraphone/57-0.mp3",
+      "rootMidi": 57,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13828
+    },
+    {
+      "instrument": "vibraphone",
+      "url": "vibraphone/81-0.mp3",
+      "rootMidi": 81,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13775
+    },
+    {
+      "instrument": "vibraphone",
+      "url": "vibraphone/71-0.mp3",
+      "rootMidi": 71,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14348
+    },
+    {
+      "instrument": "vibraphone",
+      "url": "vibraphone/60-0.mp3",
+      "rootMidi": 60,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13984
+    },
+    {
+      "instrument": "vibraphone",
+      "url": "vibraphone/84-0.mp3",
+      "rootMidi": 84,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14141
+    },
+    {
+      "instrument": "vibraphone",
+      "url": "vibraphone/74-0.mp3",
+      "rootMidi": 74,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 15206
+    },
+    {
+      "instrument": "vibraphone",
+      "url": "vibraphone/64-0.mp3",
+      "rootMidi": 64,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14010
+    },
+    {
+      "instrument": "vibraphone",
+      "url": "vibraphone/53-0.mp3",
+      "rootMidi": 53,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14011
+    },
+    {
+      "instrument": "vibraphone",
+      "url": "vibraphone/77-0.mp3",
+      "rootMidi": 77,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 14009
+    },
+    {
+      "instrument": "vibraphone",
+      "url": "vibraphone/67-0.mp3",
+      "rootMidi": 67,
+      "velocityLow": 0,
+      "velocityHigh": 1,
+      "bytes": 13983
+    }
+  ]
+}

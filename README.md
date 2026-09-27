@@ -12,7 +12,7 @@ The app is a static Vite/TypeScript SPA. Trainer telemetry and ride history rema
 
 Free Ride, Endurance, Hill Challenge, and structured Interval modes provide open-ended, duration, or climbing goals. During a ride, the HUD shows the next 1.5 km of elevation with grade-colored segments alongside live mode guidance and goal progress. Rider weight, FTP, and realistic/scenic simulation presets tune workout targets and the force-based cycling model.
 
-The ride view includes close chase, wide chase, and handlebar cameras with selectable smoothing and reduced-motion behavior. A synthesized soundscape blends wind, tires, rain, forest, lakeside, waterfall, and village ambience without loading external media. Both camera and audio can be changed while riding.
+The ride view includes close chase, wide chase, and handlebar cameras with selectable smoothing and reduced-motion behavior. The optional soundtrack generates mellow polyphonic neo-classical, jazz, blues, and American folk pieces using sampled piano, plucked strings, bass, and vibraphone with synthesized supporting textures. Select a style or Mix, and adjust music and terrain sounds independently in setup or pause settings. Samples are self-hosted and load only when sound is enabled; synthesized instruments cover slow or failed downloads. See [audio architecture, credits, and validation](docs/audio.md). Both camera and audio can be changed while riding.
 
 Completed rides retain one-second local samples for power and grade charts, FTP effort-zone time, sustained power bests, 7/30-day totals, and CSV export. Older stored summaries remain readable without a migration step.
 
@@ -61,7 +61,7 @@ Graphics regressions run on desktop, phone, and landscape Android tablet Chromiu
 ## Architecture
 
 - `src/trainer/` normalizes demo and FTMS Bluetooth telemetry and owns acknowledged load commands.
-- `src/audio/` synthesizes and mixes the local ride soundscape through Web Audio.
+- `src/audio/` composes seeded music, loads the licensed instrument bank, and schedules sampled and synthesized voices through Web Audio.
 - `src/domain/` contains environment settings, calibration, ride modes, force-based cycling physics, and local ride summaries.
 - `src/world/` generates deterministic road chunks and renders the streamed Three.js environment.
 - `src/app.ts` owns setup, calibration, ride lifecycle, resistance restoration, and DOM UI state.

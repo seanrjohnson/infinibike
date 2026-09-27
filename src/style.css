@@ -1069,3 +1069,42 @@ select:focus {
   background: rgba(18, 29, 29, 0.94);
   overflow-wrap: anywhere;
 }
+.audio-settings {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+  padding: 0.85rem;
+  border: 1px solid #72857766;
+  border-radius: 0.75rem;
+}
+.audio-settings legend {
+  padding-inline: 0.4rem;
+}
+.audio-settings input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  accent-color: #f1c75b;
+}
+.audio-settings .configuration-grid {
+  margin-block: 0.6rem;
+}
+.audio-status {
+  min-height: 1.2em;
+  font-size: 0.85rem;
+  margin-block: 0.5rem;
+}
+.audio-credits {
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.audio-credits summary {
+  cursor: pointer;
+  padding-block: 0.4rem;
+}
+.audio-credits p {
+  margin-block: 0.6rem;
+}
+.audio-credits a {
+  color: inherit;
+  text-decoration: underline;
+}

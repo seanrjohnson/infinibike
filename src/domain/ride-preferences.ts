@@ -2,8 +2,12 @@ import { normalizeEnvironment, type EnvironmentSettings } from "./environment";
 import { normalizeRideMode, type RideModeSettings } from "./ride-modes";
 import { normalizeRidePhysics, type RidePhysicsSettings } from "./ride-physics";
 import type { CameraSettings } from "../world/world-scene";
+import {
+  normalizeMusicSettings,
+  type MusicSettings,
+} from "../audio/music-types";
 
-export type RidePreferences = {
+export type RidePreferences = MusicSettings & {
   environment: EnvironmentSettings;
   rideMode: RideModeSettings;
   ridePhysics: RidePhysicsSettings;
@@ -51,6 +55,7 @@ export function normalizeRidePreferences(
   const e = record(stored.environment);
   const c = record(stored.cameraSettings);
   return {
+    ...normalizeMusicSettings(stored),
     environment: normalizeEnvironment(e),
     rideMode: normalizeRideMode(stored.rideMode),
     ridePhysics: normalizeRidePhysics(record(stored.ridePhysics)),

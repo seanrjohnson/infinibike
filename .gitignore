@@ -4,5 +4,6 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 .vite/
+.cache/
 .DS_Store
 debug.log
