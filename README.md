@@ -60,9 +60,10 @@ See [scripted scenarios](docs/scenarios.md) for the Agincourt experiences,
 historical sources, authoring contracts, and validation limits.
 
 `npm run test:e2e` runs the full local Playwright suite, including authored
-scenery and optional visual-QA cases. CI uses `npm run test:e2e:ci` for the
-desktop ride, mobile layout, and graphics regression tests after linting, unit tests, and the
-production build have passed.
+scenery and optional visual-QA cases. Run `npm run check` and the relevant
+Playwright tests locally before pushing. The deployment action only installs
+dependencies, type-checks, builds, and publishes the stable and development
+sites; it does not run lint, formatting, unit tests, or browser tests.
 
 Graphics regressions run on desktop, phone, and landscape Android tablet Chromium profiles. The primary hardware target is Chrome on the Samsung Galaxy Tab A9+; the tablet profile is representative emulation, not a hardware performance measurement. See [graphics architecture and validation](docs/graphics.md).
 
