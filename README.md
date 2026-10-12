@@ -80,6 +80,12 @@ The city landscape applies the same bounded chunk lifecycle to an instanced urba
 
 Ground and water use shared world-space tiles with identical mesh and placement queries at every quality level. Scenery descriptors retain their identities and transforms as chunks approach; quality controls resolution, shadows, and view range, while small decorations fade with distance. Biome and district providers select coherent asset kits using independent deterministic random streams. Buildings use local-space assemblies and measured authored bounds, with foundations and cross-chunk footprint checks. The same seed deterministically places villages, bridges, tunnels, waterfalls, overlooks, windmills, and summit gates. See [graphics architecture](docs/graphics.md) for extension contracts and [`docs/roadmap.md`](docs/roadmap.md) for future work.
 
+## Install on a phone or tablet
+
+Infinibike includes a web app manifest and installation icons. On Android, open the HTTPS site in Chrome and choose **Install app** or **Add to Home screen** from its menu. On iPhone or iPad, use Safari's **Share → Add to Home Screen**; on iOS/iPadOS 26 or later, leave **Open as Web App** enabled. Launch Infinibike from its installed icon to use the requested fullscreen display mode. Browsers that do not support fullscreen fall back to standalone mode; system status bars and home indicators may remain visible.
+
+Installation does not provide offline loading: no service worker or offline cache is registered. Trainer connections still require a browser with Web Bluetooth support. The stable and development deployments have separate installation identities and scopes, so each launches its own version. Physical phone installation and Bluetooth trainer behavior require manual testing.
+
 ## GitHub Pages
 
 The Pages workflow mirrors FlyBike's staged release model:

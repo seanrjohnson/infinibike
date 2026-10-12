@@ -78,7 +78,10 @@ button:disabled {
 .history-content,
 .summary-content {
   width: min(100%, 35rem);
-  padding: clamp(2rem, 6vh, 5rem) clamp(1.35rem, 5vw, 4rem);
+  padding: max(clamp(2rem, 6vh, 5rem), env(safe-area-inset-top))
+    max(clamp(1.35rem, 5vw, 4rem), env(safe-area-inset-right))
+    max(clamp(2rem, 6vh, 5rem), env(safe-area-inset-bottom))
+    max(clamp(1.35rem, 5vw, 4rem), env(safe-area-inset-left));
   overflow-y: auto;
   pointer-events: auto;
 }
@@ -420,7 +423,7 @@ select:focus {
 }
 .hud {
   position: absolute;
-  left: 1rem;
+  left: max(1rem, env(safe-area-inset-left));
   bottom: max(1rem, env(safe-area-inset-bottom));
   display: flex;
   min-height: 4.4rem;
@@ -462,7 +465,7 @@ select:focus {
 .ride-controls {
   position: absolute;
   top: max(1rem, env(safe-area-inset-top));
-  left: 1rem;
+  left: max(1rem, env(safe-area-inset-left));
   display: flex;
   gap: 0.45rem;
 }
@@ -472,7 +475,7 @@ select:focus {
 .connection-badge {
   position: absolute;
   bottom: max(1rem, env(safe-area-inset-bottom));
-  right: 1rem;
+  right: max(1rem, env(safe-area-inset-right));
   padding: 0.55rem 0.75rem;
   border-radius: 4px;
   color: #d7e0dd;
@@ -488,7 +491,7 @@ select:focus {
 .route-preview {
   position: absolute;
   top: max(1rem, env(safe-area-inset-top));
-  right: 1rem;
+  right: max(1rem, env(safe-area-inset-right));
   width: min(21rem, calc(100vw - 12rem));
   padding: 0.6rem 0.7rem 0.45rem;
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -552,7 +555,7 @@ select:focus {
 }
 .demo-power-control {
   position: absolute;
-  right: 1rem;
+  right: max(1rem, env(safe-area-inset-right));
   bottom: max(4.6rem, calc(env(safe-area-inset-bottom) + 4.6rem));
   width: 12rem;
   padding: 0.55rem 0.7rem 0.65rem;
@@ -853,7 +856,10 @@ select:focus {
   .history-content,
   .summary-content {
     width: 100%;
-    padding: 1.3rem;
+    padding: max(1.3rem, env(safe-area-inset-top))
+      max(1.3rem, env(safe-area-inset-right))
+      max(1.3rem, env(safe-area-inset-bottom))
+      max(1.3rem, env(safe-area-inset-left));
   }
   .brand-mark {
     margin: 1rem 0 1.7rem;
@@ -869,8 +875,8 @@ select:focus {
     margin: 1.25rem 0;
   }
   .hud {
-    left: 0.5rem;
-    right: 0.5rem;
+    left: max(0.5rem, env(safe-area-inset-left));
+    right: max(0.5rem, env(safe-area-inset-right));
     bottom: max(0.5rem, env(safe-area-inset-bottom));
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -892,7 +898,7 @@ select:focus {
   }
   .ride-controls {
     top: max(0.5rem, env(safe-area-inset-top));
-    left: 0.5rem;
+    left: max(0.5rem, env(safe-area-inset-left));
     flex-direction: column;
   }
   .connection-badge {
@@ -900,7 +906,7 @@ select:focus {
   }
   .route-preview {
     top: max(0.5rem, env(safe-area-inset-top));
-    right: 0.5rem;
+    right: max(0.5rem, env(safe-area-inset-right));
     width: min(18rem, 48vw);
     padding: 0.45rem 0.5rem 0.35rem;
   }
@@ -909,14 +915,14 @@ select:focus {
   }
   .ride-objective {
     top: max(0.5rem, env(safe-area-inset-top));
-    left: 4rem;
+    left: calc(3.5rem + max(0.5rem, env(safe-area-inset-left)));
     width: max-content;
     max-width: calc(52vw - 5rem);
     grid-template-columns: minmax(0, 1fr);
     transform: none;
   }
   .demo-power-control {
-    right: 0.5rem;
+    right: max(0.5rem, env(safe-area-inset-right));
     bottom: max(4.8rem, calc(env(safe-area-inset-bottom) + 4.8rem));
     width: 10.5rem;
   }
@@ -924,8 +930,8 @@ select:focus {
 
 @media (max-height: 550px) and (orientation: landscape) {
   .setup-content {
-    padding-top: 1rem;
-    padding-bottom: 1rem;
+    padding-top: max(1rem, env(safe-area-inset-top));
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
   }
   .brand-mark,
   .support-note {

@@ -1,0 +1,26 @@
+{
+  "id": "./",
+  "name": "Infinibike",
+  "short_name": "Infinibike",
+  "description": "An endless procedural world for indoor cycling.",
+  "lang": "en",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "background_color": "#1c292a",
+  "theme_color": "#88a9b2",
+  "icons": [
+    {
+      "src": "assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
